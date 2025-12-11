@@ -1,0 +1,234 @@
+:root {
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+
+  color: #0f0f0f;
+  background-color: #f6f6f6;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+.container {
+  margin: 0 auto;
+  padding: 2rem;
+  max-width: 600px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+h1 {
+  text-align: center;
+  margin: 0;
+}
+
+h2 {
+  font-size: 1.2rem;
+  margin: 0 0 0.5rem 0;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: center;
+}
+
+.device-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.device-selector label {
+  font-weight: 500;
+  color: #0f0f0f;
+}
+
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0.6em 1em;
+  font-size: 1em;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  background-color: #ffffff !important;
+  color: #0f0f0f !important;
+  width: 100%;
+  cursor: pointer;
+  /* Custom dropdown arrow */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23333' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7em center;
+  padding-right: 2.5em;
+}
+
+select option {
+  background-color: #ffffff !important;
+  color: #0f0f0f !important;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.8em 2em;
+  font-size: 1.1em;
+  font-weight: 600;
+  font-family: inherit;
+  color: #ffffff;
+  background-color: #396cd8;
+  cursor: pointer;
+  transition: all 0.25s;
+  min-width: 150px;
+}
+
+button:hover:not(:disabled) {
+  background-color: #2d5ab8;
+}
+
+button:active:not(:disabled) {
+  background-color: #244a9a;
+}
+
+button:disabled {
+  background-color: #999;
+  cursor: not-allowed;
+}
+
+button.recording {
+  background-color: #dc3545;
+}
+
+button.recording:hover {
+  background-color: #c82333;
+}
+
+.status {
+  text-align: center;
+  min-height: 1.5rem;
+  color: #666;
+}
+
+.status.loading {
+  color: #396cd8;
+}
+
+.status.error {
+  color: #dc3545;
+}
+
+.transcription-area {
+  display: flex;
+  flex-direction: column;
+}
+
+.result-box {
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  background-color: #ffffff;
+  min-height: 150px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.warning {
+  padding: 1rem;
+  border-radius: 8px;
+  background-color: #fff3cd;
+  border: 1px solid #ffc107;
+  color: #856404;
+}
+
+.warning p {
+  margin: 0.25rem 0;
+}
+
+.warning p:first-child {
+  font-weight: 600;
+}
+
+#model-path {
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+#download-model-btn {
+  margin-top: 0.75rem;
+  background-color: #28a745;
+}
+
+#download-model-btn:hover:not(:disabled) {
+  background-color: #218838;
+}
+
+#download-model-btn:active:not(:disabled) {
+  background-color: #1e7e34;
+}
+
+.download-status {
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.download-status.loading {
+  color: #396cd8;
+}
+
+.download-status.success {
+  color: #28a745;
+}
+
+.download-status.error {
+  color: #dc3545;
+}
+
+.hidden {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #f6f6f6;
+    background-color: #2f2f2f;
+  }
+
+  select {
+    color: #f6f6f6 !important;
+    background-color: #3a3a3a !important;
+    border-color: #555;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23f6f6f6' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  }
+
+  select option {
+    background-color: #3a3a3a !important;
+    color: #f6f6f6 !important;
+  }
+
+  .result-box {
+    color: #f6f6f6;
+    background-color: #0f0f0f98;
+    border-color: #555;
+  }
+
+  .warning {
+    background-color: #3d3200;
+    border-color: #ffc107;
+    color: #ffc107;
+  }
+
+  .status {
+    color: #aaa;
+  }
+
+  .device-selector label {
+    color: #f6f6f6;
+  }
+}
