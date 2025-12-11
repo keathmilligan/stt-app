@@ -12,6 +12,13 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
+
+  --waveform-bg: #1e293b;
+  --waveform-color: #3b82f6;
+  --waveform-glow: rgba(59, 130, 246, 0.5);
+  --waveform-line: #475569;
+  --waveform-grid: rgba(255, 255, 255, 0.08);
+  --waveform-text: rgba(255, 255, 255, 0.5);
 }
 
 .container {
@@ -38,6 +45,12 @@ h2 {
   flex-direction: column;
   gap: 1rem;
   align-items: center;
+}
+
+.button-group {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
 }
 
 .device-selector {
@@ -108,6 +121,29 @@ button.recording {
 
 button.recording:hover {
   background-color: #c82333;
+}
+
+button.monitoring {
+  background-color: #28a745;
+}
+
+button.monitoring:hover {
+  background-color: #218838;
+}
+
+.waveform-area {
+  width: 100%;
+  height: 220px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #ccc;
+}
+
+#waveform-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background-color: var(--waveform-bg);
 }
 
 .status {
@@ -198,6 +234,12 @@ button.recording:hover {
   :root {
     color: #f6f6f6;
     background-color: #2f2f2f;
+    --waveform-bg: #0f172a;
+    --waveform-color: #60a5fa;
+    --waveform-glow: rgba(96, 165, 250, 0.5);
+    --waveform-line: #334155;
+    --waveform-grid: rgba(255, 255, 255, 0.08);
+    --waveform-text: rgba(255, 255, 255, 0.5);
   }
 
   select {
@@ -230,5 +272,9 @@ button.recording:hover {
 
   .device-selector label {
     color: #f6f6f6;
+  }
+
+  .waveform-area {
+    border-color: #555;
   }
 }

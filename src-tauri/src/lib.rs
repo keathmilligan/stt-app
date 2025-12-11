@@ -4,7 +4,7 @@ mod transcribe;
 use audio::{AudioDevice, RecordingState};
 use std::env;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 use transcribe::Transcriber;
 
 /// Detect if running on Wayland and set workaround env vars
@@ -36,18 +36,87 @@ fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
 }
 
 #[tauri::command]
-fn start_recording(device_id: String, state: State<AppState>) -> Result<(), String> {
-    audio::start_recording(&device_id, &state.recording)
+fn start_recording(
+    device_id: String,
+    state: State<AppState>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    audio::start_recording(&device_id, &state.recording, app_handle)
 }
 
 #[tauri::command]
-fn stop_recording(state: State<AppState>) -> Result<Vec<f32>, String> {
-    audio::stop_recording(&state.recording)
+fn stop_recording(
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+    keep_monitoring: bool,
+) -> Result<(), String> {
+    // Extract raw audio quickly (non-blocking)
+    let raw_audio = audio::stop_recording(&state.recording, keep_monitoring)?;
+    
+    // Get transcriber for background processing
+    let transcriber = state.transcriber.lock().unwrap();
+    let model_available = transcriber.is_model_available();
+    let model_path = transcriber.get_model_path().clone();
+    drop(transcriber);
+    
+    // Process and transcribe in background thread
+    std::thread::spawn(move || {
+        // Process audio (resample, convert to mono)
+        let processed = match audio::process_recorded_audio(raw_audio) {
+            Ok(samples) => samples,
+            Err(e) => {
+                let _ = app_handle.emit("transcription-error", e);
+                return;
+            }
+        };
+        
+        // Transcribe
+        if !model_available {
+            let _ = app_handle.emit("transcription-error", "Model not available".to_string());
+            return;
+        }
+        
+        let mut transcriber = Transcriber::new();
+        // Point to the same model path
+        if model_path.exists() {
+            match transcriber.transcribe(&processed) {
+                Ok(text) => {
+                    let _ = app_handle.emit("transcription-complete", text);
+                }
+                Err(e) => {
+                    let _ = app_handle.emit("transcription-error", e);
+                }
+            }
+        } else {
+            let _ = app_handle.emit("transcription-error", "Model file not found".to_string());
+        }
+    });
+    
+    Ok(())
 }
 
 #[tauri::command]
 fn is_recording(state: State<AppState>) -> bool {
     state.recording.is_recording()
+}
+
+#[tauri::command]
+fn start_monitor(
+    device_id: String,
+    state: State<AppState>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    audio::start_monitor(&device_id, &state.recording, app_handle)
+}
+
+#[tauri::command]
+fn stop_monitor(state: State<AppState>) -> Result<(), String> {
+    audio::stop_monitor(&state.recording)
+}
+
+#[tauri::command]
+fn is_monitoring(state: State<AppState>) -> bool {
+    state.recording.is_monitoring()
 }
 
 #[tauri::command]
@@ -95,6 +164,9 @@ pub fn run() {
             start_recording,
             stop_recording,
             is_recording,
+            start_monitor,
+            stop_monitor,
+            is_monitoring,
             transcribe,
             check_model_status,
             download_model,
