@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 interface AudioDevice {
   id: string;
@@ -294,7 +295,7 @@ class WaveformRenderer {
 
 let deviceSelect: HTMLSelectElement | null;
 let recordBtn: HTMLButtonElement | null;
-let monitorBtn: HTMLButtonElement | null;
+let monitorToggle: HTMLInputElement | null;
 let statusEl: HTMLElement | null;
 let resultEl: HTMLElement | null;
 let modelWarning: HTMLElement | null;
@@ -302,6 +303,7 @@ let modelPathEl: HTMLElement | null;
 let downloadModelBtn: HTMLButtonElement | null;
 let downloadStatusEl: HTMLElement | null;
 let waveformCanvas: HTMLCanvasElement | null;
+let closeBtn: HTMLButtonElement | null;
 
 let isRecording = false;
 let isMonitoring = false;
@@ -334,8 +336,8 @@ async function loadDevices() {
       if (recordBtn) {
         recordBtn.disabled = false;
       }
-      if (monitorBtn) {
-        monitorBtn.disabled = false;
+      if (monitorToggle) {
+        monitorToggle.disabled = false;
       }
     }
   } catch (error) {
@@ -446,15 +448,14 @@ export function cleanupTranscriptionListeners() {
 }
 
 async function toggleMonitor() {
-  if (!deviceSelect || !monitorBtn) return;
+  if (!deviceSelect || !monitorToggle) return;
 
   if (isMonitoring) {
     // Stop monitoring
     try {
       await invoke("stop_monitor");
       isMonitoring = false;
-      monitorBtn.textContent = "Monitor";
-      monitorBtn.classList.remove("monitoring");
+      monitorToggle.checked = false;
       setStatus("");
       
       waveformRenderer?.stop();
@@ -463,12 +464,14 @@ async function toggleMonitor() {
     } catch (error) {
       console.error("Stop monitor error:", error);
       setStatus(`Error: ${error}`, "error");
+      monitorToggle.checked = true; // Revert toggle on error
     }
   } else {
     // Start monitoring
     const deviceId = deviceSelect.value;
     if (!deviceId) {
       setStatus("Please select an audio device", "error");
+      monitorToggle.checked = false; // Revert toggle
       return;
     }
 
@@ -476,8 +479,7 @@ async function toggleMonitor() {
       await setupAudioListener();
       await invoke("start_monitor", { deviceId });
       isMonitoring = true;
-      monitorBtn.textContent = "Stop Monitor";
-      monitorBtn.classList.add("monitoring");
+      monitorToggle.checked = true;
       setStatus("Monitoring...", "loading");
       
       waveformRenderer?.clear();
@@ -485,6 +487,7 @@ async function toggleMonitor() {
     } catch (error) {
       console.error("Start monitor error:", error);
       setStatus(`Error: ${error}`, "error");
+      monitorToggle.checked = false; // Revert toggle on error
       await cleanupAudioListener();
     }
   }
@@ -506,8 +509,8 @@ async function toggleRecording() {
       recordBtn.classList.remove("recording");
       
       // Re-enable monitor button
-      if (monitorBtn) {
-        monitorBtn.disabled = false;
+      if (monitorToggle) {
+        monitorToggle.disabled = false;
       }
 
       // If monitoring was active before, keep it running
@@ -535,8 +538,8 @@ async function toggleRecording() {
       isRecording = false;
       recordBtn.textContent = "Record";
       recordBtn.classList.remove("recording");
-      if (monitorBtn) {
-        monitorBtn.disabled = false;
+      if (monitorToggle) {
+        monitorToggle.disabled = false;
       }
       // On error, stop everything
       waveformRenderer?.stop();
@@ -544,9 +547,8 @@ async function toggleRecording() {
       await cleanupAudioListener();
       isMonitoring = false;
       wasMonitoringBeforeRecording = false;
-      if (monitorBtn) {
-        monitorBtn.textContent = "Monitor";
-        monitorBtn.classList.remove("monitoring");
+      if (monitorToggle) {
+        monitorToggle.checked = false;
       }
     }
   } else {
@@ -573,8 +575,8 @@ async function toggleRecording() {
       setStatus("Recording...", "loading");
       
       // Disable monitor button during recording (can't toggle it)
-      if (monitorBtn) {
-        monitorBtn.disabled = true;
+      if (monitorToggle) {
+        monitorToggle.disabled = true;
       }
 
       // Start waveform if not already running
@@ -601,7 +603,7 @@ async function toggleRecording() {
 window.addEventListener("DOMContentLoaded", () => {
   deviceSelect = document.querySelector("#device-select");
   recordBtn = document.querySelector("#record-btn");
-  monitorBtn = document.querySelector("#monitor-btn");
+  monitorToggle = document.querySelector("#monitor-toggle");
   statusEl = document.querySelector("#status");
   resultEl = document.querySelector("#transcription-result");
   modelWarning = document.querySelector("#model-warning");
@@ -633,9 +635,17 @@ window.addEventListener("DOMContentLoaded", () => {
   // Setup transcription listeners early
   setupTranscriptionListeners();
 
+  closeBtn = document.querySelector("#close-btn");
+
   recordBtn?.addEventListener("click", toggleRecording);
-  monitorBtn?.addEventListener("click", toggleMonitor);
+  monitorToggle?.addEventListener("change", toggleMonitor);
   downloadModelBtn?.addEventListener("click", downloadModel);
+  closeBtn?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const window = getCurrentWindow();
+    await window.destroy();
+  });
 
   loadDevices();
   checkModelStatus();
