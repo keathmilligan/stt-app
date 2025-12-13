@@ -16,6 +16,10 @@ interface AudioSamplesPayload {
   samples: number[];
 }
 
+interface SpeechEventPayload {
+  duration_ms: number | null;
+}
+
 // Ring buffer for storing waveform samples
 class RingBuffer {
   private buffer: Float32Array;
@@ -314,6 +318,8 @@ let waveformRenderer: WaveformRenderer | null = null;
 let audioSamplesUnlisten: UnlistenFn | null = null;
 let transcriptionCompleteUnlisten: UnlistenFn | null = null;
 let transcriptionErrorUnlisten: UnlistenFn | null = null;
+let speechStartedUnlisten: UnlistenFn | null = null;
+let speechEndedUnlisten: UnlistenFn | null = null;
 
 async function loadDevices() {
   try {
@@ -452,14 +458,44 @@ export function cleanupTranscriptionListeners() {
   }
 }
 
+async function setupSpeechEventListeners() {
+  if (speechStartedUnlisten) return;
+
+  speechStartedUnlisten = await listen<SpeechEventPayload>("speech-started", (_event) => {
+    console.log("[Speech] Started speaking");
+  });
+
+  speechEndedUnlisten = await listen<SpeechEventPayload>("speech-ended", (event) => {
+    const duration = event.payload.duration_ms;
+    console.log(`[Speech] Stopped speaking (duration: ${duration}ms)`);
+  });
+}
+
+function cleanupSpeechEventListeners() {
+  if (speechStartedUnlisten) {
+    speechStartedUnlisten();
+    speechStartedUnlisten = null;
+  }
+  if (speechEndedUnlisten) {
+    speechEndedUnlisten();
+    speechEndedUnlisten = null;
+  }
+}
+
 async function toggleProcessing() {
   if (!processingToggle) return;
 
   const newState = processingToggle.checked;
   try {
+    if (newState) {
+      await setupSpeechEventListeners();
+    }
     await invoke("set_processing_enabled", { enabled: newState });
     isProcessingEnabled = newState;
     console.log(`Voice processing ${isProcessingEnabled ? "enabled" : "disabled"}`);
+    if (!newState) {
+      cleanupSpeechEventListeners();
+    }
   } catch (error) {
     console.error("Toggle processing error:", error);
     // Revert toggle on error

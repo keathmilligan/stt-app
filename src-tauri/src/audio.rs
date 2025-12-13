@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{AppHandle, Emitter};
 
-use crate::processor::{AudioProcessor, SilenceDetector};
+#[allow(unused_imports)]
+use crate::processor::{AudioProcessor, SilenceDetector, SpeechDetector};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AudioDevice {
@@ -65,7 +66,7 @@ impl RecordingState {
                 visualization_samples: Vec::with_capacity(512),
                 is_monitoring: false,
                 is_processing_enabled: false,
-                processor: Some(Box::new(SilenceDetector::new())),
+                processor: None, // Created when processing is enabled with known sample rate
                 stream_active: false,
             })),
             stop_signal: Arc::new(Mutex::new(false)),
@@ -90,7 +91,9 @@ impl RecordingState {
         state.is_processing_enabled = enabled;
         // Reset processor state when enabling
         if enabled {
-            state.processor = Some(Box::new(SilenceDetector::new()));
+            // Use current sample rate if available, otherwise default to 48000
+            let sample_rate = if state.sample_rate > 0 { state.sample_rate } else { 48000 };
+            state.processor = Some(Box::new(SpeechDetector::new(sample_rate)));
         }
     }
 }
@@ -362,7 +365,7 @@ fn process_audio_samples(
         // Run audio processor if enabled and monitoring is active
         if audio_state.is_monitoring && audio_state.is_processing_enabled {
             if let Some(ref mut processor) = audio_state.processor {
-                processor.process(&mono_samples);
+                processor.process(&mono_samples, app_handle);
             }
         }
     }
