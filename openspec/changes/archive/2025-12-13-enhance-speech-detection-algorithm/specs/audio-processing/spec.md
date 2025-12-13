@@ -1,60 +1,4 @@
-# audio-processing Specification
-
-## Purpose
-TBD - created by archiving change add-voice-processing-monitor. Update Purpose after archive.
-## Requirements
-### Requirement: Voice Processing Toggle
-The system SHALL provide a toggle to enable or disable voice processing independently of the monitor toggle.
-
-#### Scenario: Toggle enabled while not monitoring
-- **WHEN** the user enables the voice processing toggle while monitoring is inactive
-- **THEN** the toggle state is saved but no processing occurs
-
-#### Scenario: Toggle enabled while monitoring
-- **WHEN** the user enables the voice processing toggle while monitoring is active
-- **THEN** audio processing begins immediately on incoming samples
-
-#### Scenario: Toggle disabled while processing
-- **WHEN** the user disables the voice processing toggle while processing is active
-- **THEN** audio processing stops immediately
-
-#### Scenario: Monitoring starts with processing enabled
-- **WHEN** the user starts monitoring and voice processing toggle is already enabled
-- **THEN** audio processing begins immediately with the audio stream
-
-#### Scenario: Monitoring stops with processing enabled
-- **WHEN** the user stops monitoring while voice processing is enabled
-- **THEN** audio processing stops (no samples to process) but the toggle remains enabled
-
-### Requirement: Extensible Audio Processor Architecture
-The system SHALL provide a trait-based architecture for audio processors, allowing new processor types to be added without modifying the core audio pipeline. Processors MAY emit events to the frontend via an `AppHandle` parameter.
-
-#### Scenario: Processor receives samples during monitoring
-- **WHEN** monitoring is active and voice processing is enabled
-- **THEN** the active processor receives audio samples and an AppHandle reference in the audio callback
-
-#### Scenario: Processor executes without blocking
-- **WHEN** a processor processes samples
-- **THEN** processing completes within the audio callback without causing audio dropouts
-
-#### Scenario: Processor emits event
-- **WHEN** a processor determines an event should be emitted
-- **THEN** the processor uses the provided AppHandle to emit the event to the frontend
-
-### Requirement: Silence Detection Processor
-The system SHALL include a silence detection processor that identifies periods of silence in the audio stream.
-
-#### Scenario: Silence detected
-- **WHEN** the RMS amplitude of audio samples falls below the silence threshold (-40dB)
-- **THEN** the processor logs "Silence detected" to the console
-
-#### Scenario: Sound detected after silence
-- **WHEN** the RMS amplitude rises above the silence threshold after a period of silence
-- **THEN** the processor logs "Sound detected" to the console
-
-#### Scenario: No duplicate logs
-- **WHEN** the audio remains in the same state (silent or not silent)
-- **THEN** the processor does not log repeated messages
+## MODIFIED Requirements
 
 ### Requirement: Speech Detection Events
 The system SHALL emit events when speech activity transitions occur, indicating when the user starts and stops speaking. Speech detection SHALL use multi-feature analysis including amplitude, zero-crossing rate, and spectral characteristics to distinguish speech from non-speech audio. The detector SHALL support both voiced and whispered speech through dual-mode detection.
@@ -105,6 +49,8 @@ The system SHALL allow configuration of speech detection sensitivity through thr
 #### Scenario: Dual-mode validation
 - **WHEN** audio is analyzed for speech detection
 - **THEN** features are validated against both voiced and whisper mode criteria
+
+## ADDED Requirements
 
 ### Requirement: Zero-Crossing Rate Analysis
 The system SHALL compute the zero-crossing rate of audio samples to distinguish voiced speech from impulsive transient sounds and to identify whispered speech characteristics.
@@ -173,4 +119,3 @@ The system SHALL include a dedicated whisper detection mode with parameters tune
 #### Scenario: Whisper to voiced transition
 - **WHEN** the user transitions from whispering to normal speech
 - **THEN** the speech session continues without interruption
-
