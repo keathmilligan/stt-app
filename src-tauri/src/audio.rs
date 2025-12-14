@@ -4,21 +4,15 @@ use rubato::{FftFixedIn, Resampler};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 #[allow(unused_imports)]
-use crate::processor::{AudioProcessor, SilenceDetector, SpeechDetector};
+use crate::processor::{AudioProcessor, SilenceDetector, SpeechDetector, VisualizationProcessor};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AudioDevice {
     pub id: String,
     pub name: String,
-}
-
-/// Audio samples payload for visualization events
-#[derive(Clone, Serialize)]
-pub struct AudioSamplesPayload {
-    pub samples: Vec<f32>,
 }
 
 /// Raw recorded audio data before processing
@@ -36,13 +30,15 @@ struct AudioStreamState {
     channels: u16,
     is_recording: bool,
     
-    // Visualization state
-    visualization_samples: Vec<f32>,
+    // Monitoring state
     is_monitoring: bool,
     
-    // Processing state
+    // Visualization processor (always runs when monitoring)
+    visualization_processor: Option<VisualizationProcessor>,
+    
+    // Speech processing state (controlled by toggle)
     is_processing_enabled: bool,
-    processor: Option<Box<dyn AudioProcessor>>,
+    speech_processor: Option<Box<dyn AudioProcessor>>,
     
     // Stream control
     stream_active: bool,
@@ -63,10 +59,10 @@ impl RecordingState {
                 sample_rate: 0,
                 channels: 0,
                 is_recording: false,
-                visualization_samples: Vec::with_capacity(512),
                 is_monitoring: false,
+                visualization_processor: None, // Created when monitoring starts with known sample rate
                 is_processing_enabled: false,
-                processor: None, // Created when processing is enabled with known sample rate
+                speech_processor: None, // Created when processing is enabled with known sample rate
                 stream_active: false,
             })),
             stop_signal: Arc::new(Mutex::new(false)),
@@ -93,7 +89,7 @@ impl RecordingState {
         if enabled {
             // Use current sample rate if available, otherwise default to 48000
             let sample_rate = if state.sample_rate > 0 { state.sample_rate } else { 48000 };
-            state.processor = Some(Box::new(SpeechDetector::new(sample_rate)));
+            state.speech_processor = Some(Box::new(SpeechDetector::new(sample_rate)));
         }
     }
 }
@@ -347,29 +343,24 @@ fn process_audio_samples(
             samples.to_vec()
         };
 
-        // Process for visualization if monitoring
+        // Run visualization processor if monitoring (always runs, independent of processing toggle)
         if audio_state.is_monitoring {
-            audio_state.visualization_samples.extend(&mono_samples);
-
-            // Emit when we have enough samples (~256 samples for low latency)
-            const EMIT_THRESHOLD: usize = 256;
-            if audio_state.visualization_samples.len() >= EMIT_THRESHOLD {
-                let samples_to_emit: Vec<f32> = audio_state.visualization_samples.drain(..).collect();
-                let payload = AudioSamplesPayload {
-                    samples: samples_to_emit,
-                };
-                let _ = app_handle.emit("audio-samples", payload);
+            if let Some(ref mut viz_processor) = audio_state.visualization_processor {
+                viz_processor.process(&mono_samples, app_handle);
             }
         }
 
-        // Run audio processor if enabled and monitoring is active
+        // Run speech processor if enabled and monitoring is active
         if audio_state.is_monitoring && audio_state.is_processing_enabled {
-            if let Some(ref mut processor) = audio_state.processor {
+            if let Some(ref mut processor) = audio_state.speech_processor {
                 processor.process(&mono_samples, app_handle);
             }
         }
     }
 }
+
+/// Default output height for spectrogram (matches frontend canvas)
+const SPECTROGRAM_HEIGHT: usize = 256;
 
 /// Start monitoring audio (visualization only)
 pub fn start_monitor(
@@ -387,10 +378,11 @@ pub fn start_monitor(
     // Ensure stream is running
     ensure_stream_running(device_id, state, app_handle)?;
 
-    // Enable monitoring
+    // Enable monitoring and create visualization processor
     {
         let mut audio_state = state.state.lock().unwrap();
-        audio_state.visualization_samples.clear();
+        let sample_rate = audio_state.sample_rate;
+        audio_state.visualization_processor = Some(VisualizationProcessor::new(sample_rate, SPECTROGRAM_HEIGHT));
         audio_state.is_monitoring = true;
     }
 
@@ -402,7 +394,7 @@ pub fn stop_monitor(state: &RecordingState) -> Result<(), String> {
     {
         let mut audio_state = state.state.lock().unwrap();
         audio_state.is_monitoring = false;
-        audio_state.visualization_samples.clear();
+        audio_state.visualization_processor = None;
     }
 
     // Stop stream if nothing else needs it
@@ -434,7 +426,8 @@ pub fn start_recording(
         audio_state.is_recording = true;
         // Also enable monitoring for visualization during recording
         if !audio_state.is_monitoring {
-            audio_state.visualization_samples.clear();
+            let sample_rate = audio_state.sample_rate;
+            audio_state.visualization_processor = Some(VisualizationProcessor::new(sample_rate, SPECTROGRAM_HEIGHT));
             audio_state.is_monitoring = true;
         }
     }
@@ -453,7 +446,7 @@ pub fn stop_recording(state: &RecordingState, keep_monitoring: bool) -> Result<R
         // If not keeping monitoring, stop it now
         if !keep_monitoring {
             audio_state.is_monitoring = false;
-            audio_state.visualization_samples.clear();
+            audio_state.visualization_processor = None;
         }
         
         let samples = std::mem::take(&mut audio_state.recording_samples);

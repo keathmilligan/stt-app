@@ -1,4 +1,6 @@
+use rustfft::{num_complex::Complex, FftPlanner};
 use serde::Serialize;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
 /// Audio processor trait for extensible audio analysis.
@@ -439,5 +441,322 @@ impl AudioProcessor for SpeechDetector {
 
     fn name(&self) -> &str {
         "SpeechDetector"
+    }
+}
+
+// ============================================================================
+// Visualization Processor
+// ============================================================================
+
+/// Payload for visualization data events
+#[derive(Clone, Serialize)]
+pub struct VisualizationPayload {
+    /// Pre-downsampled waveform amplitudes
+    pub waveform: Vec<f32>,
+    /// Spectrogram column with RGB colors (present when FFT buffer fills)
+    pub spectrogram: Option<SpectrogramColumn>,
+}
+
+/// A single column of spectrogram data ready for rendering
+#[derive(Clone, Serialize)]
+pub struct SpectrogramColumn {
+    /// RGB triplets for each pixel row (height * 3 bytes)
+    pub colors: Vec<u8>,
+}
+
+/// Color stop for gradient interpolation
+struct ColorStop {
+    position: f32,
+    r: u8,
+    g: u8,
+    b: u8,
+}
+
+/// Visualization processor that computes render-ready waveform and spectrogram data.
+/// 
+/// This processor:
+/// - Downsamples audio for waveform display using peak detection
+/// - Computes FFT for frequency analysis
+/// - Maps frequency magnitudes to colors using a heat map gradient
+/// - Emits visualization-data events with pre-computed render data
+pub struct VisualizationProcessor {
+    /// Sample rate for frequency calculations
+    sample_rate: u32,
+    /// Target height for spectrogram output (pixels)
+    output_height: usize,
+    /// FFT size (must be power of 2)
+    fft_size: usize,
+    /// FFT planner/executor
+    fft: Arc<dyn rustfft::Fft<f32>>,
+    /// Pre-computed Hanning window
+    hanning_window: Vec<f32>,
+    /// Buffer for accumulating samples for FFT
+    fft_buffer: Vec<f32>,
+    /// Current write position in FFT buffer
+    fft_write_index: usize,
+    /// Pre-computed color lookup table (256 entries, RGB)
+    color_lut: Vec<[u8; 3]>,
+    /// Waveform accumulator for downsampling
+    waveform_buffer: Vec<f32>,
+    /// Target waveform output samples per emit
+    waveform_target_samples: usize,
+}
+
+impl VisualizationProcessor {
+    /// Create a new visualization processor
+    /// 
+    /// # Arguments
+    /// * `sample_rate` - Audio sample rate in Hz (typically 48000)
+    /// * `output_height` - Target pixel height for spectrogram columns
+    pub fn new(sample_rate: u32, output_height: usize) -> Self {
+        let fft_size = 512;
+        
+        // Create FFT planner
+        let mut planner = FftPlanner::new();
+        let fft = planner.plan_fft_forward(fft_size);
+        
+        // Pre-compute Hanning window
+        let hanning_window: Vec<f32> = (0..fft_size)
+            .map(|i| {
+                0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (fft_size - 1) as f32).cos())
+            })
+            .collect();
+        
+        // Build color lookup table
+        let color_lut = Self::build_color_lut();
+        
+        Self {
+            sample_rate,
+            output_height,
+            fft_size,
+            fft,
+            hanning_window,
+            fft_buffer: Vec::with_capacity(fft_size),
+            fft_write_index: 0,
+            color_lut,
+            waveform_buffer: Vec::with_capacity(256),
+            waveform_target_samples: 64, // Output ~64 samples per batch for smooth waveform
+        }
+    }
+    
+    /// Build the color lookup table matching the frontend gradient
+    /// Gradient: dark blue -> blue -> cyan -> yellow-green -> orange -> red
+    fn build_color_lut() -> Vec<[u8; 3]> {
+        let stops = vec![
+            ColorStop { position: 0.00, r: 10, g: 15, b: 26 },    // Background #0a0f1a
+            ColorStop { position: 0.15, r: 0, g: 50, b: 200 },    // Blue
+            ColorStop { position: 0.35, r: 0, g: 255, b: 150 },   // Cyan
+            ColorStop { position: 0.60, r: 200, g: 255, b: 0 },   // Yellow-green
+            ColorStop { position: 0.80, r: 255, g: 155, b: 0 },   // Orange
+            ColorStop { position: 1.00, r: 255, g: 0, b: 0 },     // Red
+        ];
+        
+        let mut lut = Vec::with_capacity(256);
+        
+        for i in 0..256 {
+            let t_raw = i as f32 / 255.0;
+            // Apply gamma for better visual spread (matching frontend)
+            let t = t_raw.powf(0.7);
+            
+            // Find which segment we're in and interpolate
+            let mut color = [255u8, 0, 0]; // Fallback to red
+            
+            for j in 0..stops.len() - 1 {
+                let s1 = &stops[j];
+                let s2 = &stops[j + 1];
+                
+                if t >= s1.position && t <= s2.position {
+                    let s = (t - s1.position) / (s2.position - s1.position);
+                    color[0] = (s1.r as f32 + s * (s2.r as f32 - s1.r as f32)).round() as u8;
+                    color[1] = (s1.g as f32 + s * (s2.g as f32 - s1.g as f32)).round() as u8;
+                    color[2] = (s1.b as f32 + s * (s2.b as f32 - s1.b as f32)).round() as u8;
+                    break;
+                }
+            }
+            
+            lut.push(color);
+        }
+        
+        lut
+    }
+    
+    /// Convert normalized position (0-1) to fractional frequency bin using log scale
+    fn position_to_freq_bin(&self, pos: f32, num_bins: usize) -> f32 {
+        const MIN_FREQ: f32 = 20.0;    // 20 Hz minimum (human hearing)
+        const MAX_FREQ: f32 = 24000.0; // 24 kHz (Nyquist at 48kHz)
+        
+        let min_log = MIN_FREQ.log10();
+        let max_log = MAX_FREQ.log10();
+        
+        // Log interpolation
+        let log_freq = min_log + pos * (max_log - min_log);
+        let freq = 10.0f32.powf(log_freq);
+        
+        // Convert frequency to bin index
+        // bin = freq / (sample_rate / fft_size) = freq * fft_size / sample_rate
+        let bin_index = freq * self.fft_size as f32 / self.sample_rate as f32;
+        bin_index.clamp(0.0, (num_bins - 1) as f32)
+    }
+    
+    /// Get magnitude for a pixel row, with interpolation/averaging
+    fn get_magnitude_for_pixel(&self, magnitudes: &[f32], y: usize, height: usize) -> f32 {
+        let num_bins = magnitudes.len();
+        
+        // Get frequency range for this pixel (y=0 is top = high freq, y=height-1 is bottom = low freq)
+        let pos1 = (height - 1 - y) as f32 / height as f32;
+        let pos2 = (height - y) as f32 / height as f32;
+        
+        let bin1 = self.position_to_freq_bin(pos1, num_bins);
+        let bin2 = self.position_to_freq_bin(pos2, num_bins);
+        
+        let bin_low = bin1.min(bin2).max(0.0);
+        let bin_high = bin1.max(bin2).min((num_bins - 1) as f32);
+        
+        // If range spans less than one bin, interpolate
+        if bin_high - bin_low < 1.0 {
+            let bin_floor = bin_low.floor() as usize;
+            let bin_ceil = (bin_floor + 1).min(num_bins - 1);
+            let frac = bin_low - bin_floor as f32;
+            return magnitudes[bin_floor] * (1.0 - frac) + magnitudes[bin_ceil] * frac;
+        }
+        
+        // Otherwise, average all bins in range (weighted by overlap)
+        let mut sum = 0.0f32;
+        let mut weight = 0.0f32;
+        
+        let start_bin = bin_low.floor() as usize;
+        let end_bin = bin_high.ceil() as usize;
+        
+        for b in start_bin..=end_bin.min(num_bins - 1) {
+            let bin_start = b as f32;
+            let bin_end = (b + 1) as f32;
+            let overlap_start = bin_low.max(bin_start);
+            let overlap_end = bin_high.min(bin_end);
+            let overlap_weight = (overlap_end - overlap_start).max(0.0);
+            
+            if overlap_weight > 0.0 {
+                sum += magnitudes[b] * overlap_weight;
+                weight += overlap_weight;
+            }
+        }
+        
+        if weight > 0.0 { sum / weight } else { 0.0 }
+    }
+    
+    /// Process FFT buffer and generate spectrogram column
+    fn process_fft(&self) -> SpectrogramColumn {
+        // Apply Hanning window and prepare complex buffer
+        let mut complex_buffer: Vec<Complex<f32>> = self.fft_buffer
+            .iter()
+            .zip(self.hanning_window.iter())
+            .map(|(&sample, &window)| Complex::new(sample * window, 0.0))
+            .collect();
+        
+        // Pad if needed (shouldn't happen, but safety)
+        complex_buffer.resize(self.fft_size, Complex::new(0.0, 0.0));
+        
+        // Perform FFT
+        self.fft.process(&mut complex_buffer);
+        
+        // Compute magnitudes (only positive frequencies, first half)
+        let num_bins = self.fft_size / 2;
+        let magnitudes: Vec<f32> = complex_buffer[..num_bins]
+            .iter()
+            .map(|c| (c.re * c.re + c.im * c.im).sqrt() / self.fft_size as f32)
+            .collect();
+        
+        // Find max magnitude for normalization
+        let max_mag = magnitudes.iter().cloned().fold(0.001f32, f32::max);
+        let ref_level = max_mag.max(0.05);
+        
+        // Generate colors for each pixel row
+        let mut colors = Vec::with_capacity(self.output_height * 3);
+        
+        for y in 0..self.output_height {
+            let magnitude = self.get_magnitude_for_pixel(&magnitudes, y, self.output_height);
+            
+            // Normalize with log scale (matching frontend)
+            let normalized_db = (1.0 + magnitude / ref_level * 9.0).log10();
+            let normalized = normalized_db.clamp(0.0, 1.0);
+            
+            // Look up color
+            let color_idx = (normalized * 255.0).floor() as usize;
+            let color = &self.color_lut[color_idx.min(255)];
+            
+            colors.push(color[0]);
+            colors.push(color[1]);
+            colors.push(color[2]);
+        }
+        
+        SpectrogramColumn { colors }
+    }
+    
+    /// Downsample waveform buffer using peak detection
+    fn downsample_waveform(&self, samples: &[f32]) -> Vec<f32> {
+        if samples.is_empty() {
+            return Vec::new();
+        }
+        
+        // Calculate window size to achieve target output samples
+        let window_size = (samples.len() / self.waveform_target_samples).max(1);
+        let output_count = (samples.len() + window_size - 1) / window_size;
+        
+        let mut output = Vec::with_capacity(output_count);
+        
+        for chunk in samples.chunks(window_size) {
+            // Find peak (max absolute value) in this window, preserving sign
+            let peak = chunk
+                .iter()
+                .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
+                .copied()
+                .unwrap_or(0.0);
+            output.push(peak);
+        }
+        
+        output
+    }
+}
+
+impl AudioProcessor for VisualizationProcessor {
+    fn process(&mut self, samples: &[f32], app_handle: &AppHandle) {
+        // Accumulate samples for FFT
+        for &sample in samples {
+            if self.fft_write_index < self.fft_size {
+                if self.fft_buffer.len() <= self.fft_write_index {
+                    self.fft_buffer.push(sample);
+                } else {
+                    self.fft_buffer[self.fft_write_index] = sample;
+                }
+                self.fft_write_index += 1;
+            }
+        }
+        
+        // Accumulate samples for waveform
+        self.waveform_buffer.extend_from_slice(samples);
+        
+        // Check if FFT buffer is full
+        let spectrogram = if self.fft_write_index >= self.fft_size {
+            let column = self.process_fft();
+            self.fft_write_index = 0;
+            Some(column)
+        } else {
+            None
+        };
+        
+        // Downsample waveform
+        let waveform = self.downsample_waveform(&self.waveform_buffer);
+        self.waveform_buffer.clear();
+        
+        // Emit visualization data
+        let payload = VisualizationPayload {
+            waveform,
+            spectrogram,
+        };
+        
+        let _ = app_handle.emit("visualization-data", payload);
+    }
+    
+    fn name(&self) -> &str {
+        "VisualizationProcessor"
     }
 }

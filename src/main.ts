@@ -12,12 +12,18 @@ interface ModelStatus {
   path: string;
 }
 
-interface AudioSamplesPayload {
-  samples: number[];
-}
-
 interface SpeechEventPayload {
   duration_ms: number | null;
+}
+
+// Visualization data from backend (pre-computed)
+interface SpectrogramColumn {
+  colors: number[]; // RGB triplets for each pixel row
+}
+
+interface VisualizationPayload {
+  waveform: number[];                    // Pre-downsampled amplitudes
+  spectrogram: SpectrogramColumn | null; // Present when FFT buffer fills
 }
 
 // Ring buffer for storing waveform samples
@@ -66,104 +72,6 @@ class RingBuffer {
   }
 }
 
-// FFT processor for spectrogram visualization
-class FFTProcessor {
-  private size: number;
-  private cosTable: Float32Array;
-  private sinTable: Float32Array;
-  private hannWindow: Float32Array;
-
-  constructor(size: number = 512) {
-    // Size must be power of 2
-    if ((size & (size - 1)) !== 0) {
-      throw new Error("FFT size must be a power of 2");
-    }
-    this.size = size;
-    
-    // Pre-compute twiddle factors
-    this.cosTable = new Float32Array(size / 2);
-    this.sinTable = new Float32Array(size / 2);
-    for (let i = 0; i < size / 2; i++) {
-      const angle = (-2 * Math.PI * i) / size;
-      this.cosTable[i] = Math.cos(angle);
-      this.sinTable[i] = Math.sin(angle);
-    }
-    
-    // Pre-compute Hanning window
-    this.hannWindow = new Float32Array(size);
-    for (let i = 0; i < size; i++) {
-      this.hannWindow[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (size - 1)));
-    }
-  }
-
-  // Compute FFT and return magnitude spectrum (half the size, positive frequencies only)
-  process(samples: Float32Array): Float32Array {
-    const n = this.size;
-    
-    // Apply window and prepare complex arrays
-    const real = new Float32Array(n);
-    const imag = new Float32Array(n);
-    
-    for (let i = 0; i < n; i++) {
-      real[i] = (samples[i] || 0) * this.hannWindow[i];
-      imag[i] = 0;
-    }
-    
-    // Bit-reversal permutation
-    this.bitReverse(real);
-    this.bitReverse(imag);
-    
-    // Cooley-Tukey FFT
-    for (let size = 2; size <= n; size *= 2) {
-      const halfSize = size / 2;
-      const step = n / size;
-      
-      for (let i = 0; i < n; i += size) {
-        for (let j = 0; j < halfSize; j++) {
-          const idx = j * step;
-          const tReal = real[i + j + halfSize] * this.cosTable[idx] - imag[i + j + halfSize] * this.sinTable[idx];
-          const tImag = real[i + j + halfSize] * this.sinTable[idx] + imag[i + j + halfSize] * this.cosTable[idx];
-          
-          real[i + j + halfSize] = real[i + j] - tReal;
-          imag[i + j + halfSize] = imag[i + j] - tImag;
-          real[i + j] += tReal;
-          imag[i + j] += tImag;
-        }
-      }
-    }
-    
-    // Compute magnitude (only positive frequencies, first half)
-    const magnitudes = new Float32Array(n / 2);
-    for (let i = 0; i < n / 2; i++) {
-      magnitudes[i] = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]) / n;
-    }
-    
-    return magnitudes;
-  }
-
-  private bitReverse(array: Float32Array): void {
-    const n = array.length;
-    let j = 0;
-    for (let i = 0; i < n - 1; i++) {
-      if (i < j) {
-        const temp = array[i];
-        array[i] = array[j];
-        array[j] = temp;
-      }
-      let k = n / 2;
-      while (k <= j) {
-        j -= k;
-        k /= 2;
-      }
-      j += k;
-    }
-  }
-
-  get fftSize(): number {
-    return this.size;
-  }
-}
-
 // Waveform renderer using Canvas
 class WaveformRenderer {
   private canvas: HTMLCanvasElement;
@@ -172,7 +80,7 @@ class WaveformRenderer {
   private ringBuffer: RingBuffer;
   private isActive: boolean = false;
 
-  constructor(canvas: HTMLCanvasElement, bufferSize: number = 8192) {
+  constructor(canvas: HTMLCanvasElement, bufferSize: number = 512) {
     this.canvas = canvas;
     const ctx = canvas.getContext("2d");
     if (!ctx) {
@@ -258,15 +166,13 @@ class WaveformRenderer {
     const centerY = area.y + area.height / 2;
     const amplitude = (area.height / 2 - 4) * 1.5; // Increased amplitude scale
 
-    // Downsample if we have more samples than pixels
-    const step = Math.max(1, Math.floor(samples.length / area.width));
-    const pointCount = Math.min(samples.length, Math.floor(area.width));
+    // Draw all samples - each sample maps to a portion of the width
+    const pointCount = samples.length;
 
     // Build the path once
     this.ctx.beginPath();
     for (let i = 0; i < pointCount; i++) {
-      const sampleIndex = Math.floor(i * step);
-      const sample = samples[sampleIndex] || 0;
+      const sample = samples[i] || 0;
       const x = area.x + (i / pointCount) * area.width;
       // Clamp the sample to prevent drawing outside canvas
       const clampedSample = Math.max(-1, Math.min(1, sample));
@@ -395,27 +301,23 @@ class WaveformRenderer {
   }
 }
 
-// Spectrogram renderer using Canvas and FFT
+// Spectrogram renderer using Canvas - receives pre-computed RGB colors from backend
 class SpectrogramRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private offscreenCanvas: HTMLCanvasElement;
   private offscreenCtx: CanvasRenderingContext2D;
   private animationId: number | null = null;
-  private fft: FFTProcessor;
-  private sampleBuffer: Float32Array;
-  private bufferWriteIndex: number = 0;
   private isActive: boolean = false;
   private imageData: ImageData | null = null;
-  private colorLookup: Uint8ClampedArray[];
-  private needsNewColumn: boolean = false;
-  private pendingMagnitudes: Float32Array | null = null;
+  private columnQueue: number[][] = []; // Queue of pending columns
+  private maxQueueSize: number = 60; // Limit queue to prevent memory growth
 
   // Layout constants matching waveform
   private readonly leftMargin = 32;
   private readonly bottomMargin = 18;
 
-  constructor(canvas: HTMLCanvasElement, fftSize: number = 512) {
+  constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     const ctx = canvas.getContext("2d");
     if (!ctx) {
@@ -431,9 +333,6 @@ class SpectrogramRenderer {
     }
     this.offscreenCtx = offCtx;
     
-    this.fft = new FFTProcessor(fftSize);
-    this.sampleBuffer = new Float32Array(fftSize);
-    this.colorLookup = this.buildColorLookup();
     this.setupCanvas();
   }
 
@@ -472,72 +371,16 @@ class SpectrogramRenderer {
     }
   }
 
-  // Pre-compute color lookup table for magnitude -> RGB
-  private buildColorLookup(): Uint8ClampedArray[] {
-    const lookup: Uint8ClampedArray[] = [];
-    const steps = 256;
-    
-    for (let i = 0; i < steps; i++) {
-      const t = i / (steps - 1); // 0 to 1
-      const color = this.magnitudeToColor(t);
-      lookup.push(color);
+  // Push a pre-computed spectrogram column (RGB triplets from backend)
+  pushColumn(colors: number[]): void {
+    // Queue the column for processing during render
+    if (this.columnQueue.length < this.maxQueueSize) {
+      this.columnQueue.push(colors);
     }
-    
-    return lookup;
-  }
-
-  // Heat map: dark gray-blue -> blue -> cyan -> yellow -> red
-  // Uses smooth interpolation to avoid hard lines
-  private magnitudeToColor(t: number): Uint8ClampedArray {
-    const color = new Uint8ClampedArray(4);
-    color[3] = 255; // Alpha
-    
-    // Apply gamma for better visual spread
-    t = Math.pow(t, 0.7);
-    
-    // Define color stops with exact RGB values
-    // Each stop: [position, R, G, B]
-    const stops: [number, number, number, number][] = [
-      [0.00, 10, 15, 26],    // Background color #0a0f1a
-      [0.15, 0, 50, 200],    // Blue
-      [0.35, 0, 255, 150],   // Cyan
-      [0.60, 200, 255, 0],   // Yellow-green
-      [0.80, 255, 155, 0],   // Orange
-      [1.00, 255, 0, 0],     // Red
-    ];
-    
-    // Find which segment we're in and interpolate
-    for (let i = 0; i < stops.length - 1; i++) {
-      const [pos1, r1, g1, b1] = stops[i];
-      const [pos2, r2, g2, b2] = stops[i + 1];
-      
-      if (t >= pos1 && t <= pos2) {
-        const s = (t - pos1) / (pos2 - pos1);
-        color[0] = Math.round(r1 + s * (r2 - r1));
-        color[1] = Math.round(g1 + s * (g2 - g1));
-        color[2] = Math.round(b1 + s * (b2 - b1));
-        return color;
-      }
-    }
-    
-    // Fallback for t > 1 (shouldn't happen)
-    color[0] = 255;
-    color[1] = 0;
-    color[2] = 0;
-    return color;
-  }
-
-  pushSamples(samples: number[]): void {
-    for (const sample of samples) {
-      this.sampleBuffer[this.bufferWriteIndex] = sample;
-      this.bufferWriteIndex++;
-      
-      // When buffer is full, process FFT
-      if (this.bufferWriteIndex >= this.fft.fftSize) {
-        this.pendingMagnitudes = this.fft.process(this.sampleBuffer);
-        this.needsNewColumn = true;
-        this.bufferWriteIndex = 0;
-      }
+    // If queue is full, drop oldest to prevent lag buildup
+    else {
+      this.columnQueue.shift();
+      this.columnQueue.push(colors);
     }
   }
 
@@ -560,10 +403,7 @@ class SpectrogramRenderer {
   }
 
   clear(): void {
-    this.sampleBuffer.fill(0);
-    this.bufferWriteIndex = 0;
-    this.needsNewColumn = false;
-    this.pendingMagnitudes = null;
+    this.columnQueue = [];
     this.fillBackground();
     this.drawIdle();
   }
@@ -580,12 +420,19 @@ class SpectrogramRenderer {
     const width = this.canvas.getBoundingClientRect().width;
     const height = this.canvas.getBoundingClientRect().height;
     
-    // Process pending FFT data
-    if (this.needsNewColumn && this.pendingMagnitudes) {
+    // Process queued columns from backend
+    // At 48kHz with 512-sample FFT, we get ~93 columns/sec
+    // At 60fps, we need to process ~1.5 columns per frame on average
+    // Process up to 2 columns per frame to keep up, or more if queue is backing up
+    const columnsToProcess = Math.min(
+      this.columnQueue.length,
+      Math.max(2, Math.ceil(this.columnQueue.length / 4))
+    );
+    
+    for (let i = 0; i < columnsToProcess; i++) {
+      const column = this.columnQueue.shift()!;
       this.scrollLeft();
-      this.drawColumn(this.pendingMagnitudes);
-      this.needsNewColumn = false;
-      this.pendingMagnitudes = null;
+      this.drawColumn(column);
     }
     
     // Clear main canvas
@@ -632,26 +479,6 @@ class SpectrogramRenderer {
     }
   }
 
-  // Convert normalized position (0-1) to fractional frequency bin using log scale
-  // Returns a float for interpolation between bins
-  private positionToFreqBinFloat(pos: number, numBins: number): number {
-    // Map position to log-scaled frequency
-    // pos=0 -> minFreq (bottom), pos=1 -> maxFreq (top)
-    const minFreq = 20; // 20 Hz minimum (human hearing)
-    const maxFreq = 24000; // 24 kHz (Nyquist at 48kHz)
-    const minLog = Math.log10(minFreq);
-    const maxLog = Math.log10(maxFreq);
-    
-    // Log interpolation
-    const logFreq = minLog + pos * (maxLog - minLog);
-    const freq = Math.pow(10, logFreq);
-    
-    // Convert frequency to bin index (keep as float for interpolation)
-    // bin = freq / (sampleRate / numBins / 2) = freq * numBins * 2 / sampleRate
-    const binIndex = freq * numBins * 2 / 48000;
-    return Math.min(numBins - 1, Math.max(0, binIndex));
-  }
-
   // Convert frequency (Hz) to Y position (0-1, where 0=top, 1=bottom)
   private freqToYPosition(freq: number): number {
     const minFreq = 20;
@@ -664,87 +491,33 @@ class SpectrogramRenderer {
     return 1 - pos; // Invert so high freq is at top
   }
 
-  // Get magnitude for a pixel row, averaging bins that fall within this pixel's frequency range
-  private getMagnitudeForPixel(magnitudes: Float32Array, y: number, height: number): number {
-    const numBins = magnitudes.length;
-    
-    // Get frequency range for this pixel and the next
-    const pos1 = (height - 1 - y) / height;
-    const pos2 = (height - y) / height;
-    
-    const bin1 = this.positionToFreqBinFloat(pos1, numBins);
-    const bin2 = this.positionToFreqBinFloat(pos2, numBins);
-    
-    const binLow = Math.max(0, Math.min(bin1, bin2));
-    const binHigh = Math.min(numBins - 1, Math.max(bin1, bin2));
-    
-    // If range spans less than one bin, interpolate
-    if (binHigh - binLow < 1) {
-      const binFloor = Math.floor(binLow);
-      const binCeil = Math.min(numBins - 1, binFloor + 1);
-      const frac = binLow - binFloor;
-      return (magnitudes[binFloor] || 0) * (1 - frac) + (magnitudes[binCeil] || 0) * frac;
-    }
-    
-    // Otherwise, average all bins in range (weighted by overlap)
-    let sum = 0;
-    let weight = 0;
-    
-    const startBin = Math.floor(binLow);
-    const endBin = Math.ceil(binHigh);
-    
-    for (let b = startBin; b <= endBin && b < numBins; b++) {
-      // Calculate how much of this bin falls within our range
-      const binStart = b;
-      const binEnd = b + 1;
-      const overlapStart = Math.max(binLow, binStart);
-      const overlapEnd = Math.min(binHigh, binEnd);
-      const overlapWeight = Math.max(0, overlapEnd - overlapStart);
-      
-      if (overlapWeight > 0) {
-        sum += (magnitudes[b] || 0) * overlapWeight;
-        weight += overlapWeight;
-      }
-    }
-    
-    return weight > 0 ? sum / weight : 0;
-  }
-
-  private drawColumn(magnitudes: Float32Array): void {
+  // Draw a column of pre-computed RGB colors from backend
+  private drawColumn(colors: number[]): void {
     if (!this.imageData) return;
     const data = this.imageData.data;
     const width = this.imageData.width;
     const height = this.imageData.height;
-    const numBins = magnitudes.length;
     
-    // Find max magnitude for normalization
-    let maxMag = 0.001;
-    for (let i = 0; i < numBins; i++) {
-      if (magnitudes[i] > maxMag) maxMag = magnitudes[i];
-    }
-    const refLevel = Math.max(maxMag, 0.05);
+    // Colors array has RGB triplets, one per pixel row
+    const numPixels = Math.floor(colors.length / 3);
     
     // Draw column at rightmost position
     const x = width - 1;
     
+    // Scale backend pixels to canvas height
+    const scaleY = numPixels / height;
+    
     for (let y = 0; y < height; y++) {
-      // Get magnitude for this pixel (handles both interpolation and averaging)
-      const magnitude = this.getMagnitudeForPixel(magnitudes, y, height);
+      // Map canvas y to backend pixel (with scaling)
+      const srcY = Math.floor(y * scaleY);
+      const srcIdx = Math.min(srcY, numPixels - 1) * 3;
       
-      // Normalize to 0-1 range with log scale for magnitude
-      const normalizedDb = Math.log10(1 + magnitude / refLevel * 9) / Math.log10(10);
-      const normalized = Math.min(1, Math.max(0, normalizedDb));
-      
-      // Look up color
-      const colorIdx = Math.floor(normalized * 255);
-      const color = this.colorLookup[colorIdx];
-      
-      // Set pixel
+      // Set pixel with colors from backend
       const idx = (y * width + x) * 4;
-      data[idx] = color[0];
-      data[idx + 1] = color[1];
-      data[idx + 2] = color[2];
-      data[idx + 3] = color[3];
+      data[idx] = colors[srcIdx] || 10;       // R
+      data[idx + 1] = colors[srcIdx + 1] || 15; // G
+      data[idx + 2] = colors[srcIdx + 2] || 26; // B
+      data[idx + 3] = 255;                      // A
     }
   }
 
@@ -847,7 +620,7 @@ let isProcessingEnabled = false;
 let wasMonitoringBeforeRecording = false;
 let waveformRenderer: WaveformRenderer | null = null;
 let spectrogramRenderer: SpectrogramRenderer | null = null;
-let audioSamplesUnlisten: UnlistenFn | null = null;
+let visualizationUnlisten: UnlistenFn | null = null;
 let transcriptionCompleteUnlisten: UnlistenFn | null = null;
 let transcriptionErrorUnlisten: UnlistenFn | null = null;
 let speechStartedUnlisten: UnlistenFn | null = null;
@@ -941,23 +714,25 @@ function setStatus(message: string, type: "normal" | "loading" | "error" = "norm
   }
 }
 
-async function setupAudioListener() {
-  if (audioSamplesUnlisten) return;
+async function setupVisualizationListener() {
+  if (visualizationUnlisten) return;
 
-  audioSamplesUnlisten = await listen<AudioSamplesPayload>("audio-samples", (event) => {
+  visualizationUnlisten = await listen<VisualizationPayload>("visualization-data", (event) => {
+    // Push pre-downsampled waveform data
     if (waveformRenderer) {
-      waveformRenderer.pushSamples(event.payload.samples);
+      waveformRenderer.pushSamples(event.payload.waveform);
     }
-    if (spectrogramRenderer) {
-      spectrogramRenderer.pushSamples(event.payload.samples);
+    // Push pre-computed spectrogram column when available
+    if (spectrogramRenderer && event.payload.spectrogram) {
+      spectrogramRenderer.pushColumn(event.payload.spectrogram.colors);
     }
   });
 }
 
-async function cleanupAudioListener() {
-  if (audioSamplesUnlisten) {
-    audioSamplesUnlisten();
-    audioSamplesUnlisten = null;
+async function cleanupVisualizationListener() {
+  if (visualizationUnlisten) {
+    visualizationUnlisten();
+    visualizationUnlisten = null;
   }
 }
 
@@ -1053,7 +828,7 @@ async function toggleMonitor() {
       waveformRenderer?.clear();
       spectrogramRenderer?.stop();
       spectrogramRenderer?.clear();
-      await cleanupAudioListener();
+      await cleanupVisualizationListener();
     } catch (error) {
       console.error("Stop monitor error:", error);
       setStatus(`Error: ${error}`, "error");
@@ -1069,7 +844,7 @@ async function toggleMonitor() {
     }
 
     try {
-      await setupAudioListener();
+      await setupVisualizationListener();
       await invoke("start_monitor", { deviceId });
       isMonitoring = true;
       monitorToggle.checked = true;
@@ -1083,7 +858,7 @@ async function toggleMonitor() {
       console.error("Start monitor error:", error);
       setStatus(`Error: ${error}`, "error");
       monitorToggle.checked = false; // Revert toggle on error
-      await cleanupAudioListener();
+      await cleanupVisualizationListener();
     }
   }
 }
@@ -1120,7 +895,7 @@ async function toggleRecording() {
         waveformRenderer?.clear();
         spectrogramRenderer?.stop();
         spectrogramRenderer?.clear();
-        await cleanupAudioListener();
+        await cleanupVisualizationListener();
         setStatus("Transcribing...", "loading");
       }
 
@@ -1143,7 +918,7 @@ async function toggleRecording() {
       waveformRenderer?.clear();
       spectrogramRenderer?.stop();
       spectrogramRenderer?.clear();
-      await cleanupAudioListener();
+      await cleanupVisualizationListener();
       isMonitoring = false;
       wasMonitoringBeforeRecording = false;
       if (monitorToggle) {
@@ -1163,7 +938,7 @@ async function toggleRecording() {
 
     try {
       // Setup listeners if not already
-      await setupAudioListener();
+      await setupVisualizationListener();
       await setupTranscriptionListeners();
       
       await invoke("start_recording", { deviceId });
@@ -1197,7 +972,7 @@ async function toggleRecording() {
       wasMonitoringBeforeRecording = false;
       // Don't clean up listener if monitoring was already active
       if (!isMonitoring) {
-        await cleanupAudioListener();
+        await cleanupVisualizationListener();
       }
     }
   }
