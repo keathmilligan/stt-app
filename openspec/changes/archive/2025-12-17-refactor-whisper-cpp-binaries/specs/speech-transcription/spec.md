@@ -1,8 +1,5 @@
-# speech-transcription Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-whisper-stt-scaffolding. Update Purpose after archive.
-## Requirements
 ### Requirement: Local Whisper Transcription
 The system SHALL transcribe recorded audio to text using a local Whisper model. On Windows and macOS, transcription uses the whisper.cpp shared library loaded via FFI. On Linux, transcription uses the whisper-rs crate.
 
@@ -22,27 +19,7 @@ The system SHALL transcribe recorded audio to text using a local Whisper model. 
 - **WHEN** transcription is requested on Linux
 - **THEN** transcription is performed using the whisper-rs crate
 
-### Requirement: Model Loading
-The system SHALL load the Whisper model from a known filesystem location.
-
-#### Scenario: Model found
-- **WHEN** the model file exists at the expected path
-- **THEN** the model loads successfully and transcription is available
-
-#### Scenario: Model not found
-- **WHEN** the model file does not exist at the expected path
-- **THEN** the system displays an error message with instructions for obtaining the model
-
-### Requirement: Transcription Result Display
-The system SHALL display transcription results in a dedicated text area.
-
-#### Scenario: Display transcribed text
-- **WHEN** transcription completes successfully
-- **THEN** the transcribed text appears in the result area
-
-#### Scenario: Empty transcription
-- **WHEN** transcription completes but no speech was detected
-- **THEN** the result area indicates no speech was detected
+## ADDED Requirements
 
 ### Requirement: Whisper Library Bundling
 The system SHALL bundle the whisper.cpp shared library with the application on Windows and macOS. The library SHALL be downloaded from the official whisper.cpp GitHub releases during the build process.
@@ -81,4 +58,3 @@ The build system SHALL select the correct whisper.cpp binary based on the target
 #### Scenario: Linux build
 - **WHEN** building for Linux
 - **THEN** no binary download occurs; the whisper-rs crate builds whisper.cpp from source
-
