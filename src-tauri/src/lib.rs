@@ -2,6 +2,8 @@ mod audio;
 mod platform;
 mod processor;
 mod transcribe;
+#[cfg(not(target_os = "linux"))]
+mod whisper_ffi;
 
 use audio::{AudioDevice, AudioSourceType, RecordingMode, RecordingState, generate_recording_filename, save_to_wav};
 use platform::{AudioBackend, PlatformAudioDevice, create_backend};
