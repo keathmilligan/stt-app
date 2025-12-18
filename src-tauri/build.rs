@@ -134,31 +134,34 @@ fn extract_libraries(
     output_dir: &Path,
     lib_names: &[&str],
     target_os: &str,
-    target_arch: &str,
+    _target_arch: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let file = fs::File::open(zip_path)?;
     let mut archive = zip::ZipArchive::new(file)?;
 
     if target_os == "macos" {
-        // xcframework structure is complex - find the dylib for the right architecture
-        let framework_arch = match target_arch {
-            "x86_64" => "macos-x86_64",
-            "aarch64" => "macos-arm64",
-            _ => "macos-arm64", // default to arm64
-        };
+        // xcframework structure: the macOS binary is in macos-arm64_x86_64 (universal binary)
+        // The framework contains the binary at whisper.framework/Versions/A/whisper
+        let lib_name = lib_names[0]; // macOS only has one library (libwhisper.dylib)
 
-        let lib_name = lib_names[0]; // macOS only has one library
-
+        // First try: look for the macos universal binary framework
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
             let name = file.name().to_string();
 
-            // Look for the dylib in the correct architecture folder
-            if name.contains(framework_arch) && name.ends_with(".dylib") {
+            // Look for the framework binary in the macos folder
+            // Path: build-apple/whisper.xcframework/macos-arm64_x86_64/whisper.framework/Versions/A/whisper
+            if name.contains("macos-arm64_x86_64")
+                && name.contains("whisper.framework/Versions/A/whisper")
+                && !name.ends_with("/")
+            {
                 let output_path = output_dir.join(lib_name);
                 let mut output_file = fs::File::create(&output_path)?;
                 io::copy(&mut file, &mut output_file)?;
-                println!("cargo:warning=Extracted {} from {}", lib_name, name);
+                println!(
+                    "cargo:warning=Extracted {} from {} (framework binary)",
+                    lib_name, name
+                );
                 return Ok(());
             }
         }
@@ -172,12 +175,32 @@ fn extract_libraries(
                 let output_path = output_dir.join(lib_name);
                 let mut output_file = fs::File::create(&output_path)?;
                 io::copy(&mut file, &mut output_file)?;
-                println!("cargo:warning=Extracted {} from {} (fallback)", lib_name, name);
+                println!(
+                    "cargo:warning=Extracted {} from {} (fallback dylib)",
+                    lib_name, name
+                );
                 return Ok(());
             }
         }
 
-        return Err("Could not find dylib in xcframework".into());
+        // Second fallback: look for any macos whisper binary (not a directory)
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+            let name = file.name().to_string();
+
+            if name.contains("macos") && name.ends_with("/whisper") && file.size() > 0 {
+                let output_path = output_dir.join(lib_name);
+                let mut output_file = fs::File::create(&output_path)?;
+                io::copy(&mut file, &mut output_file)?;
+                println!(
+                    "cargo:warning=Extracted {} from {} (second fallback)",
+                    lib_name, name
+                );
+                return Ok(());
+            }
+        }
+
+        return Err("Could not find whisper binary in xcframework".into());
     } else {
         // Windows: find all required DLLs in the archive
         let mut found = vec![false; lib_names.len()];
