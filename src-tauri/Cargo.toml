@@ -33,8 +33,8 @@ hound = "3.5"
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 libloading = "0.8"
 
-# Cross-platform dependencies for audio processing
-[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+# Cross-platform dependencies for audio processing (including macOS for multi-source capture)
+[target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
 aec3 = "0.1"  # Pure Rust port of WebRTC AEC3, supports 48kHz
 
 # Linux-specific dependencies
@@ -60,3 +60,12 @@ windows = { version = "0.58", features = [
 # macOS-specific dependencies
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-rs = "0.11"
+# ScreenCaptureKit bindings for system audio capture
+screencapturekit-sys = "0.2"
+core-foundation = "0.10"
+# Objective-C bindings for additional macOS functionality
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", features = ["NSString", "NSArray", "NSError", "dispatch", "block2", "NSGeometry", "NSValue", "NSUUID"] }
+objc2-app-kit = { version = "0.2", features = ["NSRunningApplication"] }
+block2 = "0.5"
+dispatch = "0.2"

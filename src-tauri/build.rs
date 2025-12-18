@@ -11,6 +11,14 @@ fn main() {
 
     // Only download binaries on Windows and macOS
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    
+    // macOS: Link ScreenCaptureKit framework for system audio capture
+    if target_os == "macos" {
+        println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
+        println!("cargo:rustc-link-lib=framework=CoreMedia");
+        println!("cargo:rustc-link-lib=framework=AVFoundation");
+    }
+    
     if target_os == "linux" {
         println!("cargo:warning=Linux build: using whisper-rs crate (builds from source)");
         return;

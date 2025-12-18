@@ -1,12 +1,12 @@
 //! macOS audio backend module
 //!
-//! Provides CoreAudio-based audio capture for macOS, supporting:
-//! - Input device enumeration
-//! - Single-source capture from microphones
-//!
-//! System audio capture and multi-source mixing are not yet implemented.
+//! Provides audio capture for macOS, supporting:
+//! - Input device enumeration and capture (CoreAudio)
+//! - System audio enumeration and capture via ScreenCaptureKit (macOS 12.3+)
+//! - Multi-source capture with mixing
+//! - Echo cancellation (AEC3)
 
 mod coreaudio;
-mod stub;
+mod screencapturekit;
 
 pub use coreaudio::create_backend;
