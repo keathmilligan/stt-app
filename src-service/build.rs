@@ -13,17 +13,17 @@ const GITHUB_RELEASE_BASE: &str = "https://github.com/ggml-org/whisper.cpp/relea
 
 fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    
+
     // Check if CUDA feature is enabled (set by Cargo when --features cuda is used)
     let cuda_enabled = env::var("CARGO_FEATURE_CUDA").is_ok();
-    
+
     // macOS: Link ScreenCaptureKit framework for system audio capture
     if target_os == "macos" {
         println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
         println!("cargo:rustc-link-lib=framework=CoreMedia");
         println!("cargo:rustc-link-lib=framework=AVFoundation");
     }
-    
+
     // Linux: Build whisper.cpp from source using CMake
     if target_os == "linux" {
         build_whisper_linux(cuda_enabled);
@@ -35,9 +35,12 @@ fn main() {
 
     // Determine which binary to download and which libraries to extract
     // When CUDA feature is enabled on Windows x64, use CUDA-enabled binaries
-    let (zip_name, lib_names): (&str, Vec<&str>) = match (target_os.as_str(), target_arch.as_str()) {
+    let (zip_name, lib_names): (&str, Vec<&str>) = match (target_os.as_str(), target_arch.as_str())
+    {
         ("windows", "x86_64") if cuda_enabled => {
-            println!("cargo:warning=CUDA feature enabled - using CUDA-accelerated whisper.cpp binaries");
+            println!(
+                "cargo:warning=CUDA feature enabled - using CUDA-accelerated whisper.cpp binaries"
+            );
             (
                 "whisper-cublas-12.4.0-bin-x64.zip",
                 vec![
@@ -80,7 +83,10 @@ fn main() {
             )
         }
         _ => {
-            println!("cargo:warning=Unsupported platform: {}-{}", target_os, target_arch);
+            println!(
+                "cargo:warning=Unsupported platform: {}-{}",
+                target_os, target_arch
+            );
             return;
         }
     };
@@ -92,7 +98,10 @@ fn main() {
 
     // Include cuda in cache path to separate CUDA and non-CUDA builds
     let cuda_suffix = if cuda_enabled { "-cuda" } else { "" };
-    let zip_path = cache_dir.join(format!("whisper-{}-{}{}.zip", WHISPER_VERSION, target_arch, cuda_suffix));
+    let zip_path = cache_dir.join(format!(
+        "whisper-{}-{}{}.zip",
+        WHISPER_VERSION, target_arch, cuda_suffix
+    ));
     // Separate output directories for CUDA and non-CUDA to avoid mixing libraries
     let lib_output_dir = out_dir.join(format!("whisper-lib{}", cuda_suffix));
     fs::create_dir_all(&lib_output_dir).expect("Failed to create lib output directory");
@@ -110,20 +119,32 @@ fn main() {
 
         // Extract all required libraries
         println!("cargo:warning=Extracting whisper.cpp libraries...");
-        extract_libraries(&zip_path, &lib_output_dir, &lib_names, &target_os, &target_arch)
-            .expect("Failed to extract whisper.cpp libraries");
+        extract_libraries(
+            &zip_path,
+            &lib_output_dir,
+            &lib_names,
+            &target_os,
+            &target_arch,
+        )
+        .expect("Failed to extract whisper.cpp libraries");
     }
 
     // Set linker flags
-    println!("cargo:rustc-link-search=native={}", lib_output_dir.display());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        lib_output_dir.display()
+    );
 
     // Copy all libraries to target directory for runtime
     copy_libraries_to_runtime(&lib_output_dir, &lib_names, &out_dir);
 
     // Also write the primary library path to a file for runtime discovery
     let lib_path_file = out_dir.join("whisper_lib_path.txt");
-    fs::write(&lib_path_file, primary_lib_path.to_string_lossy().as_bytes())
-        .expect("Failed to write library path file");
+    fs::write(
+        &lib_path_file,
+        primary_lib_path.to_string_lossy().as_bytes(),
+    )
+    .expect("Failed to write library path file");
 
     // Rerun if build.rs changes
     println!("cargo:rerun-if-changed=build.rs");
@@ -133,7 +154,7 @@ fn main() {
 fn build_whisper_linux(cuda_enabled: bool) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
     let _target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    
+
     // Check for CMake
     if !check_cmake_available() {
         panic!(
@@ -144,7 +165,7 @@ fn build_whisper_linux(cuda_enabled: bool) {
             - Arch: sudo pacman -S cmake\n\n"
         );
     }
-    
+
     // Check for CUDA toolkit if cuda feature is enabled
     if cuda_enabled && !check_cuda_available() {
         panic!(
@@ -156,22 +177,22 @@ fn build_whisper_linux(cuda_enabled: bool) {
             cargo build --release\n\n"
         );
     }
-    
+
     // Create cache directory for source
     let cache_dir = out_dir.join("whisper-cache");
     fs::create_dir_all(&cache_dir).expect("Failed to create cache directory");
-    
+
     // Include cuda in paths to separate CUDA and non-CUDA builds
     let cuda_suffix = if cuda_enabled { "-cuda" } else { "" };
     let source_tarball = cache_dir.join(format!("whisper-{}.tar.gz", WHISPER_VERSION));
     let source_dir = cache_dir.join(format!("whisper.cpp-{}", WHISPER_VERSION));
     let build_dir = out_dir.join(format!("whisper-build{}", cuda_suffix));
     let lib_output_dir = out_dir.join(format!("whisper-lib{}", cuda_suffix));
-    
+
     fs::create_dir_all(&lib_output_dir).expect("Failed to create lib output directory");
-    
+
     let lib_path = lib_output_dir.join("libwhisper.so");
-    
+
     // Check if we already have the library built
     if lib_path.exists() {
         println!("cargo:warning=Using cached whisper.cpp library");
@@ -184,17 +205,19 @@ fn build_whisper_linux(cuda_enabled: bool) {
                     WHISPER_VERSION
                 );
                 println!("cargo:warning=Downloading whisper.cpp source from: {}", url);
-                download_file(&url, &source_tarball).expect("Failed to download whisper.cpp source");
+                download_file(&url, &source_tarball)
+                    .expect("Failed to download whisper.cpp source");
             }
-            
+
             // Extract tarball
             println!("cargo:warning=Extracting whisper.cpp source...");
-            extract_tarball(&source_tarball, &cache_dir).expect("Failed to extract whisper.cpp source");
+            extract_tarball(&source_tarball, &cache_dir)
+                .expect("Failed to extract whisper.cpp source");
         }
-        
+
         // Create build directory
         fs::create_dir_all(&build_dir).expect("Failed to create build directory");
-        
+
         // Configure with CMake
         println!("cargo:warning=Configuring whisper.cpp with CMake...");
         let mut cmake_args = vec![
@@ -205,22 +228,22 @@ fn build_whisper_linux(cuda_enabled: bool) {
             "-DWHISPER_BUILD_TESTS=OFF".to_string(),
             "-DWHISPER_BUILD_SERVER=OFF".to_string(),
         ];
-        
+
         if cuda_enabled {
             println!("cargo:warning=CUDA feature enabled - configuring with GPU support");
             cmake_args.push("-DGGML_CUDA=ON".to_string());
         }
-        
+
         let cmake_status = Command::new("cmake")
             .args(&cmake_args)
             .current_dir(&build_dir)
             .status()
             .expect("Failed to run cmake configure");
-        
+
         if !cmake_status.success() {
             panic!("CMake configuration failed");
         }
-        
+
         // Build
         println!("cargo:warning=Building whisper.cpp (this may take a few minutes)...");
         let build_status = Command::new("cmake")
@@ -228,24 +251,31 @@ fn build_whisper_linux(cuda_enabled: bool) {
             .current_dir(&build_dir)
             .status()
             .expect("Failed to run cmake build");
-        
+
         if !build_status.success() {
             panic!("CMake build failed");
         }
-        
+
         // Find and copy built libraries
         println!("cargo:warning=Copying built libraries...");
-        copy_built_libraries(&build_dir, &lib_output_dir)
-            .expect("Failed to copy built libraries");
+        copy_built_libraries(&build_dir, &lib_output_dir).expect("Failed to copy built libraries");
     }
-    
+
     // Set linker flags
-    println!("cargo:rustc-link-search=native={}", lib_output_dir.display());
-    
+    println!(
+        "cargo:rustc-link-search=native={}",
+        lib_output_dir.display()
+    );
+
     // Copy libraries to runtime directory
-    let lib_names: Vec<&str> = vec!["libwhisper.so", "libggml.so", "libggml-base.so", "libggml-cpu.so"];
+    let lib_names: Vec<&str> = vec![
+        "libwhisper.so",
+        "libggml.so",
+        "libggml-base.so",
+        "libggml-cpu.so",
+    ];
     copy_libraries_to_runtime(&lib_output_dir, &lib_names, &out_dir);
-    
+
     // If CUDA is enabled, also copy CUDA-specific libraries
     if cuda_enabled {
         let cuda_libs = ["libggml-cuda.so"];
@@ -256,17 +286,17 @@ fn build_whisper_linux(cuda_enabled: bool) {
             }
         }
     }
-    
+
     // Write library path for runtime discovery
     let lib_path_file = out_dir.join("whisper_lib_path.txt");
     fs::write(&lib_path_file, lib_path.to_string_lossy().as_bytes())
         .expect("Failed to write library path file");
-    
+
     println!("cargo:warning=Linux build: whisper.cpp built from source with CMake");
     if cuda_enabled {
         println!("cargo:warning=CUDA support enabled");
     }
-    
+
     println!("cargo:rerun-if-changed=build.rs");
 }
 
@@ -291,18 +321,26 @@ fn check_cuda_available() -> bool {
 /// Extract a .tar.gz file
 fn extract_tarball(tarball: &Path, dest: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let status = Command::new("tar")
-        .args(["-xzf", &tarball.to_string_lossy(), "-C", &dest.to_string_lossy()])
+        .args([
+            "-xzf",
+            &tarball.to_string_lossy(),
+            "-C",
+            &dest.to_string_lossy(),
+        ])
         .status()?;
-    
+
     if !status.success() {
         return Err("Failed to extract tarball".into());
     }
-    
+
     Ok(())
 }
 
 /// Copy built libraries from CMake build directory to output
-fn copy_built_libraries(build_dir: &Path, output_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn copy_built_libraries(
+    build_dir: &Path,
+    output_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Look for shared libraries in the build directory
     // CMake may put them in different locations depending on configuration
     let search_paths = [
@@ -311,7 +349,7 @@ fn copy_built_libraries(build_dir: &Path, output_dir: &Path) -> Result<(), Box<d
         build_dir.join("ggml").join("src"),
         build_dir.join("lib"),
     ];
-    
+
     let lib_patterns = [
         "libwhisper.so",
         "libggml.so",
@@ -319,7 +357,7 @@ fn copy_built_libraries(build_dir: &Path, output_dir: &Path) -> Result<(), Box<d
         "libggml-cpu.so",
         "libggml-cuda.so",
     ];
-    
+
     for pattern in &lib_patterns {
         for search_path in &search_paths {
             // Look for the library (may have version suffix like .so.1.8.2)
@@ -327,25 +365,25 @@ fn copy_built_libraries(build_dir: &Path, output_dir: &Path) -> Result<(), Box<d
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name_str = name.to_string_lossy();
-                    
+
                     // Match libwhisper.so or libwhisper.so.1.8.2 etc.
                     if name_str.starts_with(pattern) || name_str == *pattern {
                         let src = entry.path();
-                        
+
                         // Follow symlinks to get the actual file
                         let real_src = if src.is_symlink() {
                             fs::read_link(&src).unwrap_or(src.clone())
                         } else {
                             src.clone()
                         };
-                        
+
                         // Resolve relative symlink paths
                         let real_src = if real_src.is_relative() {
                             search_path.join(&real_src)
                         } else {
                             real_src
                         };
-                        
+
                         if real_src.exists() && real_src.is_file() {
                             // Copy as the base name (libwhisper.so)
                             let dest = output_dir.join(pattern);
@@ -358,12 +396,12 @@ fn copy_built_libraries(build_dir: &Path, output_dir: &Path) -> Result<(), Box<d
             }
         }
     }
-    
+
     // Verify libwhisper.so was copied
     if !output_dir.join("libwhisper.so").exists() {
         return Err("libwhisper.so not found in build output".into());
     }
-    
+
     Ok(())
 }
 
@@ -402,7 +440,9 @@ fn copy_library_to_runtime(lib_path: &Path, lib_name: &str, out_dir: &Path) {
         if lib_path.exists()
             && (!runtime_lib_path.exists()
                 || fs::metadata(lib_path).map(|m| m.len()).unwrap_or(0)
-                    != fs::metadata(&runtime_lib_path).map(|m| m.len()).unwrap_or(0))
+                    != fs::metadata(&runtime_lib_path)
+                        .map(|m| m.len())
+                        .unwrap_or(0))
         {
             if let Err(e) = fs::copy(lib_path, &runtime_lib_path) {
                 println!("cargo:warning=Failed to copy {}: {}", lib_name, e);
@@ -506,7 +546,7 @@ fn extract_libraries(
             }
         }
 
-        return Err("Could not find whisper binary in xcframework".into());
+        Err("Could not find whisper binary in xcframework".into())
     } else {
         // Windows: find all required DLLs in the archive
         let mut found = vec![false; lib_names.len()];

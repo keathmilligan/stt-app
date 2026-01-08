@@ -1,6 +1,6 @@
 //! Platform-agnostic audio backend trait.
 
-use flowstt_common::{AudioDevice, AudioSourceType, RecordingMode};
+use flowstt_common::{AudioDevice, RecordingMode};
 
 /// Audio data received from capture
 pub struct AudioData {
@@ -9,6 +9,7 @@ pub struct AudioData {
     /// Number of channels
     pub channels: u16,
     /// Sample rate in Hz
+    #[allow(dead_code)]
     pub sample_rate: u32,
 }
 

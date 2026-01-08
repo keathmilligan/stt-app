@@ -188,17 +188,19 @@ impl VisualizationCallback for VisualizationBroadcaster {
         let data = VisualizationData {
             waveform: payload.waveform,
             spectrogram: payload.spectrogram.map(|s| s.colors),
-            speech_metrics: payload.speech_metrics.map(|m| flowstt_common::SpeechMetrics {
-                amplitude_db: m.amplitude_db,
-                zcr: m.zcr,
-                centroid_hz: m.centroid_hz,
-                is_speaking: m.is_speaking,
-                voiced_onset_pending: m.is_voiced_pending,
-                whisper_onset_pending: m.is_whisper_pending,
-                is_transient: m.is_transient,
-                is_lookback_speech: m.is_lookback_speech,
-                is_word_break: m.is_word_break,
-            }),
+            speech_metrics: payload
+                .speech_metrics
+                .map(|m| flowstt_common::SpeechMetrics {
+                    amplitude_db: m.amplitude_db,
+                    zcr: m.zcr,
+                    centroid_hz: m.centroid_hz,
+                    is_speaking: m.is_speaking,
+                    voiced_onset_pending: m.is_voiced_pending,
+                    whisper_onset_pending: m.is_whisper_pending,
+                    is_transient: m.is_transient,
+                    is_lookback_speech: m.is_lookback_speech,
+                    is_word_break: m.is_word_break,
+                }),
         };
         broadcast_event(Response::Event {
             event: EventType::VisualizationData(data),

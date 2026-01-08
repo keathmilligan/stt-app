@@ -137,9 +137,7 @@ impl SCKAudioCapture {
     /// Create a new system audio capture
     pub fn new() -> Result<Self, String> {
         if !is_available() {
-            return Err(
-                "System audio capture is not available (requires macOS 12.3+)".to_string(),
-            );
+            return Err("System audio capture is not available (requires macOS 12.3+)".to_string());
         }
 
         tracing::info!("System Audio: Using ScreenCaptureKit (macOS 12.3+)");

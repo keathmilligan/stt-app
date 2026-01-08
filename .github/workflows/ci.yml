@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-22.04, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          # Add PipeWire PPA for newer version (Ubuntu 22.04 ships 0.3.48, we need 0.3.65+)
+          sudo add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libpipewire-0.3-dev \
+            libspa-0.2-dev \
+            libclang-dev \
+            cmake
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+            src-service -> target
+            src-common -> target
+            src-cli -> target
+
+      - name: TypeScript type check
+        run: pnpm exec tsc --noEmit
+
+      - name: Rust lint (clippy) - common library
+        working-directory: src-common
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Rust lint (clippy) - service
+        working-directory: src-service
+        # Note: --all-features omitted because 'cuda' feature requires NVIDIA CUDA Toolkit
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Rust lint (clippy) - main app
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Rust lint (clippy) - CLI
+        working-directory: src-cli
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Rust tests - common library
+        working-directory: src-common
+        run: cargo test --all-features
+
+      - name: Rust tests - service
+        working-directory: src-service
+        # Note: --all-features omitted because 'cuda' feature requires NVIDIA CUDA Toolkit
+        run: cargo test
+
+      - name: Rust tests - main app
+        working-directory: src-tauri
+        run: cargo test --all-features
+
+      - name: Rust tests - CLI
+        working-directory: src-cli
+        run: cargo test --all-features

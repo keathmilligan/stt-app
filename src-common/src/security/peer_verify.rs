@@ -90,9 +90,7 @@ fn verify_executable(exe_path: &Path) -> Result<(), PeerVerifyError> {
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()));
 
-    let in_trusted_dir = TRUSTED_DIRECTORIES
-        .iter()
-        .any(|d| exe_dir == Path::new(d));
+    let in_trusted_dir = TRUSTED_DIRECTORIES.iter().any(|d| exe_dir == Path::new(d));
     let same_as_self = self_dir.as_ref().map(|d| exe_dir == d).unwrap_or(false);
 
     // During development, also allow cargo target directories
@@ -221,9 +219,7 @@ pub fn verify_peer(stream: &std::os::unix::net::UnixStream) -> Result<PeerInfo, 
 
 /// Verify connecting peer on Windows using GetNamedPipeClientProcessId.
 #[cfg(target_os = "windows")]
-pub fn verify_peer(
-    pipe: windows::Win32::Foundation::HANDLE,
-) -> Result<PeerInfo, PeerVerifyError> {
+pub fn verify_peer(pipe: windows::Win32::Foundation::HANDLE) -> Result<PeerInfo, PeerVerifyError> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
     use windows::Win32::System::Threading::{

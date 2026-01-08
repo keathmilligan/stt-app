@@ -16,7 +16,7 @@ pub mod macos;
 
 mod backend;
 
-pub use backend::{AudioBackend, AudioData};
+pub use backend::AudioBackend;
 
 /// Initialize the platform-specific audio backend.
 pub fn init_audio_backend() -> Result<(), String> {

@@ -3,7 +3,9 @@
 //! This client is used by the Tauri GUI to communicate with the background service.
 //! It handles connection management, service auto-spawn, and event forwarding.
 
-use flowstt_common::ipc::{get_socket_path, read_json, write_json, EventType, IpcError, Request, Response};
+use flowstt_common::ipc::{
+    get_socket_path, read_json, write_json, EventType, IpcError, Request, Response,
+};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;

@@ -6,7 +6,6 @@
 //! - Multi-source capture with mixing
 //! - Echo cancellation using AEC3
 
-use flowstt_common::{AudioDevice, AudioSourceType, RecordingMode};
 use crate::platform::backend::{AudioBackend, AudioData};
 use crate::platform::macos::screencapturekit::{self, SCKAudioCapture};
 use aec3::voip::VoipAec3;
@@ -15,9 +14,10 @@ use coreaudio::audio_unit::macos_helpers::{
 };
 use coreaudio::audio_unit::Scope;
 use coreaudio::sys::{
-    self, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitProperty_StreamFormat,
-    AudioBuffer, AudioBufferList, AudioUnitRenderActionFlags,
+    self, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitProperty_StreamFormat, AudioBuffer,
+    AudioBufferList, AudioUnitRenderActionFlags,
 };
+use flowstt_common::{AudioDevice, AudioSourceType, RecordingMode};
 use std::collections::HashSet;
 use std::os::raw::c_void;
 use std::ptr;

@@ -39,7 +39,7 @@ pub struct AudioDevice {
 }
 
 /// Status of the transcription system.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TranscribeStatus {
     /// Whether transcription mode is active
     pub active: bool,
@@ -47,16 +47,6 @@ pub struct TranscribeStatus {
     pub in_speech: bool,
     /// Number of segments waiting to be transcribed
     pub queue_depth: usize,
-}
-
-impl Default for TranscribeStatus {
-    fn default() -> Self {
-        Self {
-            active: false,
-            in_speech: false,
-            queue_depth: 0,
-        }
-    }
 }
 
 /// Status of the Whisper model.

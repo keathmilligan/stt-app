@@ -3,11 +3,12 @@
 //! This module manages the shared state for the FlowSTT service,
 //! including transcription status and audio backend state.
 
-use flowstt_common::{TranscribeStatus, RecordingMode};
+use flowstt_common::{RecordingMode, TranscribeStatus};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Global service state
+#[derive(Default)]
 pub struct ServiceState {
     /// Current transcription status
     pub transcribe_status: TranscribeStatus,
@@ -19,18 +20,6 @@ pub struct ServiceState {
     pub source1_id: Option<String>,
     /// Secondary audio source ID
     pub source2_id: Option<String>,
-}
-
-impl Default for ServiceState {
-    fn default() -> Self {
-        Self {
-            transcribe_status: TranscribeStatus::default(),
-            aec_enabled: false,
-            recording_mode: RecordingMode::default(),
-            source1_id: None,
-            source2_id: None,
-        }
-    }
 }
 
 /// Thread-safe wrapper for service state

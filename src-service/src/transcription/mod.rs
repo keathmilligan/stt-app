@@ -15,10 +15,6 @@ pub mod transcriber;
 pub mod whisper_ffi;
 
 // Re-export main types
-pub use queue::{QueuedSegment, TranscriptionCallback, TranscriptionQueue};
-pub use transcribe_state::{SegmentRingBuffer, TranscribeState, TranscribeStateCallback};
+pub use queue::{TranscriptionCallback, TranscriptionQueue};
+pub use transcribe_state::TranscribeState;
 pub use transcriber::{download_model, Transcriber};
-pub use whisper_ffi::{
-    full_default_params, get_system_info, init_library, Context, WhisperFullParams,
-    WhisperSamplingStrategy, WhisperVadParams,
-};

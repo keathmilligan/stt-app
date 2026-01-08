@@ -11,7 +11,9 @@ mod processor;
 mod state;
 mod transcription;
 
-pub use audio_loop::{start_audio_loop, stop_audio_loop, is_audio_loop_active, TranscriptionEventBroadcaster};
+pub use audio_loop::{
+    is_audio_loop_active, start_audio_loop, stop_audio_loop, TranscriptionEventBroadcaster,
+};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -47,10 +49,7 @@ fn main() {
         )
         .init();
 
-    info!(
-        "FlowSTT Service starting (pid: {})...",
-        std::process::id()
-    );
+    info!("FlowSTT Service starting (pid: {})...", std::process::id());
 
     // Set up signal handlers for graceful shutdown
     setup_signal_handlers();

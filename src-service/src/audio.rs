@@ -3,10 +3,7 @@
 //! This module contains audio-related types and utilities shared across
 //! the service, including format conversion and recording.
 
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-
-pub use flowstt_common::{AudioDevice, AudioSourceType, RecordingMode};
 
 /// Raw recorded audio data before processing
 pub struct RawRecordedAudio {
@@ -14,9 +11,6 @@ pub struct RawRecordedAudio {
     pub sample_rate: u32,
     pub channels: u16,
 }
-
-/// Maximum recording duration in samples (10 minutes at 48kHz stereo)
-const MAX_RECORDING_SAMPLES: usize = 48000 * 60 * 10 * 2;
 
 /// Convert multi-channel audio to mono by averaging channels
 pub fn convert_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {

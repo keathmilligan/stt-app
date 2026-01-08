@@ -3,9 +3,9 @@
 mod coreaudio;
 pub mod screencapturekit;
 
-use std::sync::{Arc, Mutex, OnceLock};
-use flowstt_common::RecordingMode;
 use super::AudioBackend;
+use flowstt_common::RecordingMode;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Global backend instance
 static BACKEND: OnceLock<Box<dyn AudioBackend>> = OnceLock::new();
@@ -13,15 +13,17 @@ static BACKEND: OnceLock<Box<dyn AudioBackend>> = OnceLock::new();
 /// Initialize the macOS audio backend.
 pub fn init() -> Result<(), String> {
     tracing::info!("Initializing macOS CoreAudio audio backend");
-    
+
     // Create shared state for AEC and recording mode
     let aec_enabled = Arc::new(Mutex::new(false));
     let recording_mode = Arc::new(Mutex::new(RecordingMode::default()));
-    
+
     let backend = coreaudio::create_backend(aec_enabled, recording_mode)?;
-    
-    BACKEND.set(backend).map_err(|_| "Backend already initialized".to_string())?;
-    
+
+    BACKEND
+        .set(backend)
+        .map_err(|_| "Backend already initialized".to_string())?;
+
     tracing::info!("macOS CoreAudio audio backend initialized");
     Ok(())
 }

@@ -135,6 +135,7 @@ impl WhisperFullParams {
     /// Configure parameters optimized for short audio segments (real-time transcription)
     /// - n_samples: total samples in the (possibly padded) audio buffer
     /// - duration_ms: actual speech duration in milliseconds (before padding)
+    #[allow(dead_code)]
     pub fn configure_for_short_audio(&mut self, n_samples: usize, duration_ms: c_int) {
         // Don't use past transcription as context (important for streaming)
         self.no_context = true;
@@ -199,7 +200,8 @@ pub struct WhisperLibrary {
         n_samples: c_int,
     ) -> c_int,
     full_n_segments: unsafe extern "C" fn(ctx: WhisperContext) -> c_int,
-    full_get_segment_text: unsafe extern "C" fn(ctx: WhisperContext, i_segment: c_int) -> *const c_char,
+    full_get_segment_text:
+        unsafe extern "C" fn(ctx: WhisperContext, i_segment: c_int) -> *const c_char,
     print_system_info: unsafe extern "C" fn() -> *const c_char,
 }
 
@@ -232,9 +234,12 @@ impl WhisperLibrary {
                 .map_err(|e| format!("Failed to load whisper_full_default_params: {}", e))?;
 
             let full = *lib
-                .get::<unsafe extern "C" fn(WhisperContext, WhisperFullParams, *const c_float, c_int) -> c_int>(
-                    b"whisper_full\0",
-                )
+                .get::<unsafe extern "C" fn(
+                    WhisperContext,
+                    WhisperFullParams,
+                    *const c_float,
+                    c_int,
+                ) -> c_int>(b"whisper_full\0")
                 .map_err(|e| format!("Failed to load whisper_full: {}", e))?;
 
             let full_n_segments = *lib

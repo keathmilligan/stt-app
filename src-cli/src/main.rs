@@ -7,9 +7,8 @@ mod client;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
-use flowstt_common::ipc::{EventType, Request, Response};
+use flowstt_common::ipc::{Request, Response};
 use flowstt_common::{AudioSourceType, RecordingMode};
-use std::io::{self, Write};
 
 use client::Client;
 
@@ -154,28 +153,26 @@ async fn run(cli: Cli) -> Result<(), String> {
                 Response::Devices { devices } => {
                     if matches!(cli.format, OutputFormat::Json) {
                         println!("{}", serde_json::to_string_pretty(&devices).unwrap());
+                    } else if devices.is_empty() {
+                        println!("No audio devices found");
                     } else {
-                        if devices.is_empty() {
-                            println!("No audio devices found");
-                        } else {
-                            println!(
-                                "{} {} found:\n",
-                                devices.len().to_string().green().bold(),
-                                if devices.len() == 1 {
-                                    "device"
-                                } else {
-                                    "devices"
-                                }
-                            );
-                            for device in devices {
-                                let source_badge = match device.source_type {
-                                    AudioSourceType::Input => "[input]".cyan(),
-                                    AudioSourceType::System => "[system]".magenta(),
-                                    AudioSourceType::Mixed => "[mixed]".yellow(),
-                                };
-                                println!("  {} {}", source_badge, device.name);
-                                println!("    ID: {}", device.id.dimmed());
+                        println!(
+                            "{} {} found:\n",
+                            devices.len().to_string().green().bold(),
+                            if devices.len() == 1 {
+                                "device"
+                            } else {
+                                "devices"
                             }
+                        );
+                        for device in devices {
+                            let source_badge = match device.source_type {
+                                AudioSourceType::Input => "[input]".cyan(),
+                                AudioSourceType::System => "[system]".magenta(),
+                                AudioSourceType::Mixed => "[mixed]".yellow(),
+                            };
+                            println!("  {} {}", source_badge, device.name);
+                            println!("    ID: {}", device.id.dimmed());
                         }
                     }
                 }
@@ -413,19 +410,17 @@ async fn run(cli: Cli) -> Result<(), String> {
             }
         }
 
-        Commands::Ping => {
-            match client.ping().await {
-                Ok(true) => {
-                    if matches!(cli.format, OutputFormat::Json) {
-                        println!(r#"{{"status": "ok"}}"#);
-                    } else {
-                        println!("{}", "pong".green());
-                    }
+        Commands::Ping => match client.ping().await {
+            Ok(true) => {
+                if matches!(cli.format, OutputFormat::Json) {
+                    println!(r#"{{"status": "ok"}}"#);
+                } else {
+                    println!("{}", "pong".green());
                 }
-                Ok(false) => return Err("Service not responding".into()),
-                Err(e) => return Err(e.to_string()),
             }
-        }
+            Ok(false) => return Err("Service not responding".into()),
+            Err(e) => return Err(e.to_string()),
+        },
 
         Commands::Shutdown => {
             let response = client

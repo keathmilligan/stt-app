@@ -277,27 +277,30 @@ impl TranscribeState {
         }
 
         // Check for overflow before writing (if in speech)
-        let overflow_segment =
-            if self.in_speech && self.ring_buffer.is_approaching_overflow(self.segment_start_idx) {
-                // Extract current segment before it gets overwritten
-                let segment = self.ring_buffer.extract_segment(self.segment_start_idx);
+        let overflow_segment = if self.in_speech
+            && self
+                .ring_buffer
+                .is_approaching_overflow(self.segment_start_idx)
+        {
+            // Extract current segment before it gets overwritten
+            let segment = self.ring_buffer.extract_segment(self.segment_start_idx);
 
-                // Update segment start to current write position
-                self.segment_start_idx = self.ring_buffer.write_position();
-                self.segment_sample_count = 0;
-                self.seeking_word_break = false;
-                self.lookback_sample_count = 0; // No lookback for continuation segments
+            // Update segment start to current write position
+            self.segment_start_idx = self.ring_buffer.write_position();
+            self.segment_sample_count = 0;
+            self.seeking_word_break = false;
+            self.lookback_sample_count = 0; // No lookback for continuation segments
 
-                // Remain in speech state
-                tracing::debug!(
-                    "[TranscribeState] Buffer overflow - extracted partial segment ({} samples)",
-                    segment.len()
-                );
+            // Remain in speech state
+            tracing::debug!(
+                "[TranscribeState] Buffer overflow - extracted partial segment ({} samples)",
+                segment.len()
+            );
 
-                Some(segment)
-            } else {
-                None
-            };
+            Some(segment)
+        } else {
+            None
+        };
 
         // Write samples to ring buffer (always happens)
         self.ring_buffer.write(samples);
@@ -465,7 +468,9 @@ impl TranscribeState {
         self.segment_start_idx = extraction_end_idx;
         self.lookback_sample_count = 0;
         // Remaining samples in the segment
-        self.segment_sample_count = self.segment_sample_count.saturating_sub(gap_midpoint_samples);
+        self.segment_sample_count = self
+            .segment_sample_count
+            .saturating_sub(gap_midpoint_samples);
         self.seeking_word_break = false;
 
         Some(segment)

@@ -25,9 +25,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
+use crate::platform::backend::{AudioBackend, AudioData};
 use aec3::voip::VoipAec3;
 use flowstt_common::{AudioDevice, AudioSourceType, RecordingMode};
-use crate::platform::backend::{AudioBackend, AudioData};
 
 /// Commands sent to the PipeWire thread
 #[derive(Debug)]
@@ -69,7 +69,10 @@ pub struct PipeWireBackend {
 
 impl PipeWireBackend {
     /// Create and start the PipeWire backend with shared AEC enabled flag and recording mode
-    pub fn new(aec_enabled: Arc<Mutex<bool>>, recording_mode: Arc<Mutex<RecordingMode>>) -> Result<Self, String> {
+    pub fn new(
+        aec_enabled: Arc<Mutex<bool>>,
+        recording_mode: Arc<Mutex<RecordingMode>>,
+    ) -> Result<Self, String> {
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let (audio_tx, audio_rx) = mpsc::channel();
         let input_devices = Arc::new(Mutex::new(Vec::new()));
@@ -133,7 +136,7 @@ impl AudioBackend for PipeWireBackend {
         // Convert string IDs to u32 for PipeWire
         let source1: Option<u32> = source1_id.as_ref().and_then(|s| s.parse().ok());
         let source2: Option<u32> = source2_id.as_ref().and_then(|s| s.parse().ok());
-        
+
         self.cmd_tx
             .send(PwCommand::StartCaptureSources {
                 source1_id: source1,
@@ -150,11 +153,16 @@ impl AudioBackend for PipeWireBackend {
 
     fn try_recv(&self) -> Option<AudioData> {
         let sample_rate = *self.sample_rate.lock().unwrap();
-        self.audio_rx.lock().unwrap().try_recv().ok().map(|pw_samples| AudioData {
-            samples: pw_samples.samples,
-            channels: pw_samples.channels,
-            sample_rate,
-        })
+        self.audio_rx
+            .lock()
+            .unwrap()
+            .try_recv()
+            .ok()
+            .map(|pw_samples| AudioData {
+                samples: pw_samples.samples,
+                channels: pw_samples.channels,
+                sample_rate,
+            })
     }
 
     fn set_aec_enabled(&self, enabled: bool) {
@@ -225,7 +233,7 @@ impl AudioMixer {
         self.capture_buffer.clear();
         self.render_buffer.clear();
         self.render_mix_buffer.clear();
-        
+
         // Create AEC3 pipeline when we have 2 streams (mic + system audio)
         if num == 2 {
             // Initial delay hint: start with 0ms and let AEC adapt
@@ -236,8 +244,8 @@ impl AudioMixer {
             {
                 Ok(aec) => {
                     tracing::info!(
-                        "PipeWire: AEC3 initialized: 48kHz, {} channels, {}ms frames", 
-                        self.channels, 
+                        "PipeWire: AEC3 initialized: 48kHz, {} channels, {}ms frames",
+                        self.channels,
                         AEC_FRAME_SAMPLES * 1000 / 48000
                     );
                     self.aec = Some(aec);
@@ -271,14 +279,14 @@ impl AudioMixer {
 
         // Two streams mode
         let frame_size = AEC_FRAME_SAMPLES * self.channels as usize;
-        
+
         if is_sink_capture {
             // System audio (render) - feed to AEC immediately in frame-sized chunks
             // This is critical: AEC needs to see render BEFORE corresponding capture
             self.render_buffer.extend_from_slice(samples);
             // Also keep a copy for mixing in Mixed mode
             self.render_mix_buffer.extend_from_slice(samples);
-            
+
             // Feed render frames to AEC immediately
             if let Some(ref mut aec) = self.aec {
                 while self.render_buffer.len() >= frame_size {
@@ -299,11 +307,12 @@ impl AudioMixer {
     fn process_capture(&mut self) {
         let aec_enabled = *self.aec_enabled.lock().unwrap();
         let recording_mode = *self.recording_mode.lock().unwrap();
-        
+
         let frame_size = AEC_FRAME_SAMPLES * self.channels as usize;
-        
+
         // Process capture frames when we have enough data from both sources
-        while self.capture_buffer.len() >= frame_size && self.render_mix_buffer.len() >= frame_size {
+        while self.capture_buffer.len() >= frame_size && self.render_mix_buffer.len() >= frame_size
+        {
             let capture_frame: Vec<f32> = self.capture_buffer.drain(0..frame_size).collect();
             let render_frame: Vec<f32> = self.render_mix_buffer.drain(0..frame_size).collect();
 
@@ -325,12 +334,13 @@ impl AudioMixer {
             } else {
                 capture_frame
             };
-            
+
             // Generate output based on recording mode
             let output: Vec<f32> = match recording_mode {
                 RecordingMode::Mixed => {
                     // Mix processed capture with system audio (0.5 gain each to prevent clipping)
-                    processed_capture.iter()
+                    processed_capture
+                        .iter()
                         .zip(render_frame.iter())
                         .map(|(&s1, &s2)| (s1 + s2) * 0.5)
                         .collect()
@@ -340,23 +350,31 @@ impl AudioMixer {
                     processed_capture
                 }
             };
-            
+
             // Debug logging (periodic)
             static LOG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
             let count = LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if count % 500 == 0 {
+            if count.is_multiple_of(500) {
                 let render_rms: f32 = if !render_frame.is_empty() {
-                    (render_frame.iter().map(|s| s * s).sum::<f32>() / render_frame.len() as f32).sqrt()
-                } else { 0.0 };
+                    (render_frame.iter().map(|s| s * s).sum::<f32>() / render_frame.len() as f32)
+                        .sqrt()
+                } else {
+                    0.0
+                };
                 let out_rms: f32 = if !output.is_empty() {
                     (output.iter().map(|s| s * s).sum::<f32>() / output.len() as f32).sqrt()
-                } else { 0.0 };
+                } else {
+                    0.0
+                };
                 tracing::debug!(
-                    "PipeWire AudioMixer: mode={:?}, aec={}, render_rms={:.4}, out_rms={:.4}", 
-                    recording_mode, aec_enabled, render_rms, out_rms
+                    "PipeWire AudioMixer: mode={:?}, aec={}, render_rms={:.4}, out_rms={:.4}",
+                    recording_mode,
+                    aec_enabled,
+                    render_rms,
+                    out_rms
                 );
             }
-            
+
             // Send output
             let _ = self.output_tx.send(PwAudioSamples {
                 samples: output,
@@ -396,7 +414,8 @@ fn run_pipewire_thread(
     pipewire::init();
 
     let mainloop = MainLoop::new(None).map_err(|e| format!("Failed to create main loop: {}", e))?;
-    let context = Context::new(&mainloop).map_err(|e| format!("Failed to create context: {}", e))?;
+    let context =
+        Context::new(&mainloop).map_err(|e| format!("Failed to create context: {}", e))?;
     let core = context
         .connect(None)
         .map_err(|e| format!("Failed to connect to PipeWire: {}", e))?;
@@ -468,7 +487,11 @@ fn run_pipewire_thread(
         .register();
 
     // Create mixer with AEC enabled flag and recording mode
-    let mixer = Rc::new(RefCell::new(AudioMixer::new(audio_tx, aec_enabled, recording_mode)));
+    let mixer = Rc::new(RefCell::new(AudioMixer::new(
+        audio_tx,
+        aec_enabled,
+        recording_mode,
+    )));
 
     // Thread state - share system_map to know which IDs are sinks
     let state = Rc::new(RefCell::new(PwThreadState {
@@ -476,7 +499,7 @@ fn run_pipewire_thread(
         sample_rate: Arc::clone(&sample_rate),
         sink_ids: Rc::new(RefCell::new(std::collections::HashSet::new())),
     }));
-    
+
     // Keep sink_ids in sync with system_map
     let sink_ids_for_state = Rc::clone(&state.borrow().sink_ids);
     let system_map_for_sync = Rc::clone(&system_map);
@@ -498,7 +521,7 @@ fn run_pipewire_thread(
                     sink_ids.insert(*id);
                 }
             }
-            
+
             // Poll for commands
             while let Ok(cmd) = cmd_rx.try_recv() {
                 match cmd {
@@ -507,19 +530,20 @@ fn run_pipewire_thread(
                         source2_id,
                     } => {
                         // First, check which sources are sinks (before borrowing state mutably)
-                        let is_sink1 = source1_id.map(|id| {
-                            state_for_timer.borrow().sink_ids.borrow().contains(&id)
-                        }).unwrap_or(false);
-                        let is_sink2 = source2_id.map(|id| {
-                            state_for_timer.borrow().sink_ids.borrow().contains(&id)
-                        }).unwrap_or(false);
-                        
+                        let is_sink1 = source1_id
+                            .map(|id| state_for_timer.borrow().sink_ids.borrow().contains(&id))
+                            .unwrap_or(false);
+                        let is_sink2 = source2_id
+                            .map(|id| state_for_timer.borrow().sink_ids.borrow().contains(&id))
+                            .unwrap_or(false);
+
                         let mut state = state_for_timer.borrow_mut();
                         // Clear existing streams
                         state.streams.clear();
-                        
+
                         // Count how many streams we'll have
-                        let num_streams = source1_id.is_some() as usize + source2_id.is_some() as usize;
+                        let num_streams =
+                            source1_id.is_some() as usize + source2_id.is_some() as usize;
                         mixer_for_timer.borrow_mut().set_num_streams(num_streams);
 
                         // Create stream for source1 if specified
@@ -534,10 +558,12 @@ fn run_pipewire_thread(
                                 Arc::clone(&state.sample_rate),
                             ) {
                                 Ok(stream) => state.streams.push(stream),
-                                Err(e) => tracing::error!("Failed to create stream for source1: {}", e),
+                                Err(e) => {
+                                    tracing::error!("Failed to create stream for source1: {}", e)
+                                }
                             }
                         }
-                        
+
                         // Create stream for source2 if specified
                         if let Some(id) = source2_id {
                             let mixer_clone = Rc::clone(&mixer_for_timer);
@@ -550,7 +576,9 @@ fn run_pipewire_thread(
                                 Arc::clone(&state.sample_rate),
                             ) {
                                 Ok(stream) => state.streams.push(stream),
-                                Err(e) => tracing::error!("Failed to create stream for source2: {}", e),
+                                Err(e) => {
+                                    tracing::error!("Failed to create stream for source2: {}", e)
+                                }
                             }
                         }
                     }
@@ -580,13 +608,13 @@ fn create_audio_format_pod() -> Vec<u8> {
     let mut audio_info = AudioInfoRaw::new();
     audio_info.set_format(AudioFormat::F32LE);
     // Leave rate and channels unset to accept native graph format
-    
+
     let obj = pipewire::spa::pod::Object {
         type_: pipewire::spa::utils::SpaTypes::ObjectParamFormat.as_raw(),
         id: pipewire::spa::param::ParamType::EnumFormat.as_raw(),
         properties: audio_info.into(),
     };
-    
+
     pipewire::spa::pod::serialize::PodSerializer::serialize(
         std::io::Cursor::new(Vec::new()),
         &pipewire::spa::pod::Value::Object(obj),
@@ -605,12 +633,12 @@ fn create_capture_stream(
     mixer: Rc<RefCell<AudioMixer>>,
     sample_rate: Arc<Mutex<u32>>,
 ) -> Result<ActiveStream, String> {
-    let stream_name = if capture_sink { 
+    let stream_name = if capture_sink {
         format!("flowstt-system-capture-{}", stream_index)
-    } else { 
+    } else {
         format!("flowstt-input-capture-{}", stream_index)
     };
-    
+
     let props = if capture_sink {
         properties! {
             *pipewire::keys::MEDIA_TYPE => "Audio",
@@ -640,16 +668,16 @@ fn create_capture_stream(
         .add_local_listener_with_user_data(())
         .param_changed(move |_stream, _user_data, id, param| {
             let Some(param) = param else { return };
-            
+
             if id != pipewire::spa::param::ParamType::Format.as_raw() {
                 return;
             }
 
             // Parse the format
-            if let Ok((media_type, media_subtype)) = 
-                pipewire::spa::param::format_utils::parse_format(param) 
+            if let Ok((media_type, media_subtype)) =
+                pipewire::spa::param::format_utils::parse_format(param)
             {
-                use pipewire::spa::param::format::{MediaType, MediaSubtype};
+                use pipewire::spa::param::format::{MediaSubtype, MediaType};
                 if media_type != MediaType::Audio || media_subtype != MediaSubtype::Raw {
                     return;
                 }
@@ -657,7 +685,12 @@ fn create_capture_stream(
                 if format_info_for_param.borrow_mut().parse(param).is_ok() {
                     let rate = format_info_for_param.borrow().rate();
                     let channels = format_info_for_param.borrow().channels();
-                    tracing::info!("Stream {} format: rate={}, channels={}", stream_index, rate, channels);
+                    tracing::info!(
+                        "Stream {} format: rate={}, channels={}",
+                        stream_index,
+                        rate,
+                        channels
+                    );
                     *sample_rate_for_param.lock().unwrap() = rate;
                     mixer_for_param.borrow_mut().set_channels(channels as u16);
                 }
@@ -677,7 +710,7 @@ fn create_capture_stream(
                 // Get chunk info first
                 let chunk_size = data.chunk().size() as usize;
                 let n_samples = chunk_size / mem::size_of::<f32>();
-                
+
                 if n_samples == 0 {
                     return;
                 }
@@ -708,7 +741,7 @@ fn create_capture_stream(
 
     // Connect to device (or default if None)
     let flags = StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS;
-    
+
     stream
         .connect(Direction::Input, device_id, flags, &mut params)
         .map_err(|e| format!("Failed to connect stream: {}", e))?;

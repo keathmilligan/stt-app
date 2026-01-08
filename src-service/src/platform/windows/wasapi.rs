@@ -6,8 +6,8 @@
 //! - Multi-source capture with mixing
 //! - Echo cancellation using AEC3
 
-use flowstt_common::{AudioDevice, AudioSourceType, RecordingMode};
 use crate::platform::backend::{AudioBackend, AudioData};
+use flowstt_common::{AudioDevice, AudioSourceType, RecordingMode};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -307,10 +307,7 @@ fn enumerate_render_devices() -> Result<Vec<AudioDevice>, String> {
 }
 
 /// Convert an IMMDevice to an AudioDevice
-fn device_to_audio_device(
-    device: &IMMDevice,
-    source_type: AudioSourceType,
-) -> Option<AudioDevice> {
+fn device_to_audio_device(device: &IMMDevice, source_type: AudioSourceType) -> Option<AudioDevice> {
     unsafe {
         let id_ptr: PWSTR = device.GetId().ok()?;
         let id = pwstr_to_string(id_ptr);
@@ -623,8 +620,7 @@ fn run_capture_thread(
                         .unwrap_or(false);
 
                     // Count streams
-                    let num_streams =
-                        source1_id.is_some() as usize + source2_id.is_some() as usize;
+                    let num_streams = source1_id.is_some() as usize + source2_id.is_some() as usize;
                     mixer.set_num_streams(num_streams);
 
                     // Start capture
@@ -1040,10 +1036,7 @@ unsafe fn convert_to_f32(buffer: *const u8, num_frames: usize, format: &CaptureF
     } else if !format.is_float && format.bits_per_sample == 32 {
         let i32_ptr = buffer as *const i32;
         let i32_slice = std::slice::from_raw_parts(i32_ptr, num_samples);
-        i32_slice
-            .iter()
-            .map(|&s| s as f32 / 2147483648.0)
-            .collect()
+        i32_slice.iter().map(|&s| s as f32 / 2147483648.0).collect()
     } else {
         tracing::error!(
             "WASAPI: Unsupported format: float={}, bits={}",

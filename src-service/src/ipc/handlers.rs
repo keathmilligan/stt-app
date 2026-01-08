@@ -8,11 +8,14 @@ use tracing::info;
 use super::server::broadcast_event;
 use crate::platform;
 use crate::state::get_service_state;
-use crate::transcription::{download_model, TranscribeState, TranscriptionQueue, Transcriber};
-use crate::{start_audio_loop, stop_audio_loop, is_audio_loop_active, TranscriptionEventBroadcaster};
+use crate::transcription::{download_model, TranscribeState, Transcriber, TranscriptionQueue};
+use crate::{
+    is_audio_loop_active, start_audio_loop, stop_audio_loop, TranscriptionEventBroadcaster,
+};
 
 /// Global transcription queue
-static TRANSCRIPTION_QUEUE: std::sync::OnceLock<Arc<TranscriptionQueue>> = std::sync::OnceLock::new();
+static TRANSCRIPTION_QUEUE: std::sync::OnceLock<Arc<TranscriptionQueue>> =
+    std::sync::OnceLock::new();
 
 fn get_transcription_queue() -> Arc<TranscriptionQueue> {
     TRANSCRIPTION_QUEUE
@@ -21,7 +24,8 @@ fn get_transcription_queue() -> Arc<TranscriptionQueue> {
 }
 
 /// Global transcribe state
-static TRANSCRIBE_STATE: std::sync::OnceLock<Arc<std::sync::Mutex<TranscribeState>>> = std::sync::OnceLock::new();
+static TRANSCRIBE_STATE: std::sync::OnceLock<Arc<std::sync::Mutex<TranscribeState>>> =
+    std::sync::OnceLock::new();
 
 fn get_transcribe_state() -> Arc<std::sync::Mutex<TranscribeState>> {
     TRANSCRIBE_STATE

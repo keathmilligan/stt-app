@@ -93,8 +93,12 @@ async fn start_monitor(
     match response {
         Response::Ok => {
             // Start event forwarding if not already running
-            start_event_forwarding(state.ipc.clone(), app_handle, state.event_task_running.clone())
-                .await;
+            start_event_forwarding(
+                state.ipc.clone(),
+                app_handle,
+                state.event_task_running.clone(),
+            )
+            .await;
             Ok(())
         }
         Response::Error { message } => Err(message),
@@ -177,7 +181,10 @@ async fn is_aec_enabled(_state: State<'_, AppState>) -> Result<bool, String> {
 
 /// Set recording mode
 #[tauri::command]
-async fn set_recording_mode(_mode: RecordingMode, _state: State<'_, AppState>) -> Result<(), String> {
+async fn set_recording_mode(
+    _mode: RecordingMode,
+    _state: State<'_, AppState>,
+) -> Result<(), String> {
     // Recording mode is configured per-request in the service
     Ok(())
 }
@@ -287,8 +294,12 @@ async fn start_transcribe_mode(
     match response {
         Response::Ok => {
             // Start event forwarding if not already running
-            start_event_forwarding(state.ipc.clone(), app_handle, state.event_task_running.clone())
-                .await;
+            start_event_forwarding(
+                state.ipc.clone(),
+                app_handle,
+                state.event_task_running.clone(),
+            )
+            .await;
             println!("[TranscribeMode] Started via service");
             Ok(())
         }
@@ -299,7 +310,10 @@ async fn start_transcribe_mode(
 
 /// Stop automatic transcription mode
 #[tauri::command]
-async fn stop_transcribe_mode(state: State<'_, AppState>, _app_handle: AppHandle) -> Result<(), String> {
+async fn stop_transcribe_mode(
+    state: State<'_, AppState>,
+    _app_handle: AppHandle,
+) -> Result<(), String> {
     let response = send_request(&state.ipc, Request::StopTranscribe).await?;
 
     match response {

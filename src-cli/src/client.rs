@@ -44,6 +44,7 @@ impl Client {
     }
 
     /// Check if the service is running.
+    #[allow(dead_code)]
     pub async fn is_service_running() -> bool {
         let socket_path = get_socket_path();
         socket_path.exists()

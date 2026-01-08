@@ -3,8 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    AudioDevice, CudaStatus, ModelStatus, TranscribeStatus, TranscriptionResult,
-    VisualizationData,
+    AudioDevice, CudaStatus, ModelStatus, TranscribeStatus, TranscriptionResult, VisualizationData,
 };
 
 /// IPC response from service to client.

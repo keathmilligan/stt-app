@@ -112,6 +112,7 @@ impl Transcriber {
     /// Transcribe audio with duration hint for optimization.
     ///
     /// The duration_ms parameter helps optimize whisper parameters for short audio.
+    #[allow(dead_code)]
     pub fn transcribe_with_duration(
         &mut self,
         audio_data: &[f32],
