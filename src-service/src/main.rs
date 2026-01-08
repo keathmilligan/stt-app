@@ -17,7 +17,9 @@ pub use audio_loop::{
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{error, info};
+#[cfg(unix)]
+use tracing::warn;
 use tracing_subscriber::EnvFilter;
 
 /// Global shutdown flag

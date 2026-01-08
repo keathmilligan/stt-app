@@ -55,7 +55,6 @@ struct WasapiAudioSamples {
 
 /// Samples from a stream thread to the mixer
 struct StreamSamples {
-    stream_index: usize,
     samples: Vec<f32>,
     /// Whether this stream is loopback (system audio) - used for AEC routing
     is_loopback: bool,
@@ -86,8 +85,6 @@ pub struct WasapiBackend {
     sample_rate: u32,
     /// Capture thread handle
     _thread_handle: JoinHandle<()>,
-    /// Flag indicating if capture is active
-    is_capturing: Arc<AtomicBool>,
     /// AEC enabled flag (shared with mixer)
     aec_enabled: Arc<Mutex<bool>>,
     /// Recording mode (shared with mixer)
@@ -152,7 +149,6 @@ impl WasapiBackend {
             system_devices,
             sample_rate: TARGET_SAMPLE_RATE,
             _thread_handle: thread_handle,
-            is_capturing,
             aec_enabled,
             recording_mode,
         })
@@ -779,9 +775,7 @@ fn run_stream_capture(
 
                 // Capture loop
                 while !stop_flag.load(Ordering::SeqCst) {
-                    if let Err(e) =
-                        process_capture(&mut state, stream_index, is_loopback, &stream_tx)
-                    {
+                    if let Err(e) = process_capture(&mut state, is_loopback, &stream_tx) {
                         tracing::error!("WASAPI: Stream {} capture error: {}", stream_index, e);
                         break;
                     }
@@ -952,7 +946,6 @@ fn parse_wave_format(format: &WAVEFORMATEX) -> Result<CaptureFormat, String> {
 /// Process captured audio data
 unsafe fn process_capture(
     state: &mut CaptureState,
-    stream_index: usize,
     is_loopback: bool,
     stream_tx: &mpsc::Sender<StreamSamples>,
 ) -> Result<(), String> {
@@ -1002,7 +995,6 @@ unsafe fn process_capture(
 
         // Send to mixer thread via channel with loopback flag
         let _ = stream_tx.send(StreamSamples {
-            stream_index,
             samples: stereo_samples,
             is_loopback,
         });
