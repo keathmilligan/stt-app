@@ -20,19 +20,54 @@ interface CudaStatus {
   system_info: string;
 }
 
-interface SpeechEventPayload {
-  duration_ms: number | null;
-  lookback_samples: number[] | null;
-  lookback_offset_ms: number | null;
+// CaptureStatus matches backend TranscribeStatus
+// interface CaptureStatus {
+//   capturing: boolean;
+//   in_speech: boolean;
+//   queue_depth: number;
+//   error: string | null;
+// }
+
+// Transcription mode matching backend
+type TranscriptionMode = "automatic" | "push_to_talk";
+
+// Key codes for PTT hotkey
+type KeyCode = "right_alt" | "left_alt" | "right_control" | "left_control" | 
+               "right_shift" | "left_shift" | "caps_lock" | 
+               "f13" | "f14" | "f15" | "f16" | "f17" | "f18" | "f19" | "f20";
+
+interface PttStatus {
+  mode: TranscriptionMode;
+  key: KeyCode;
+  is_active: boolean;
+  available: boolean;
+  error: string | null;
 }
+
+// Key code display names
+const KEY_CODE_NAMES: Record<KeyCode, string> = {
+  right_alt: "Right Option",
+  left_alt: "Left Option",
+  right_control: "Right Control",
+  left_control: "Left Control",
+  right_shift: "Right Shift",
+  left_shift: "Left Shift",
+  caps_lock: "Caps Lock",
+  f13: "F13",
+  f14: "F14",
+  f15: "F15",
+  f16: "F16",
+  f17: "F17",
+  f18: "F18",
+  f19: "F19",
+  f20: "F20",
+};
 
 // DOM elements
 let source1Select: HTMLSelectElement | null;
 let source2Select: HTMLSelectElement | null;
-let monitorToggle: HTMLInputElement | null;
-let aecToggle: HTMLInputElement | null;
-let modeSelect: HTMLSelectElement | null;
-let transcribeToggle: HTMLInputElement | null;
+let modeToggle: HTMLInputElement | null;
+let pttKeySelect: HTMLSelectElement | null;
 let statusEl: HTMLElement | null;
 let resultEl: HTMLElement | null;
 let modelWarning: HTMLElement | null;
@@ -41,60 +76,43 @@ let downloadModelBtn: HTMLButtonElement | null;
 let downloadStatusEl: HTMLElement | null;
 let miniWaveformCanvas: HTMLCanvasElement | null;
 let closeBtn: HTMLButtonElement | null;
-
-// Recording mode type matching backend
-type RecordingMode = "Mixed" | "EchoCancel";
+let pttIndicator: HTMLElement | null;
 
 // State
-let isMonitoring = false;
-let isAecEnabled = false;
-let recordingMode: RecordingMode = "Mixed";
-let isTranscribing = false;
+let isCapturing = false;
 let inSpeechSegment = false;
 let transcribeQueueDepth = 0;
 let allDevices: AudioDevice[] = [];
-let miniWaveformRenderer: MiniWaveformRenderer | null = null;
+let transcriptionMode: TranscriptionMode = "push_to_talk";
+let pttKey: KeyCode = "right_alt";
+let isPttActive = false;
+
+// Event listeners
 let visualizationUnlisten: UnlistenFn | null = null;
 let transcriptionCompleteUnlisten: UnlistenFn | null = null;
 let transcriptionErrorUnlisten: UnlistenFn | null = null;
 let speechStartedUnlisten: UnlistenFn | null = null;
 let speechEndedUnlisten: UnlistenFn | null = null;
-let recordingSavedUnlisten: UnlistenFn | null = null;
-let transcribeQueueUpdateUnlisten: UnlistenFn | null = null;
-let transcriptionStartedUnlisten: UnlistenFn | null = null;
-let transcriptionFinishedUnlisten: UnlistenFn | null = null;
+let captureStateChangedUnlisten: UnlistenFn | null = null;
+let pttPressedUnlisten: UnlistenFn | null = null;
+let pttReleasedUnlisten: UnlistenFn | null = null;
+let transcriptionModeChangedUnlisten: UnlistenFn | null = null;
 
-// CUDA and transcription status
-let cudaBuildEnabled = false;
+let miniWaveformRenderer: MiniWaveformRenderer | null = null;
+
+// CUDA indicator
 let cudaIndicator: HTMLElement | null = null;
-let transcribingIndicator: HTMLElement | null = null;
 
 async function loadDevices() {
   try {
-    // Load all available sources
     allDevices = await invoke<AudioDevice[]>("list_all_sources");
 
     // Populate both source dropdowns
-    populateSourceDropdown(source1Select, true);  // Has "None" option, select first device
-    populateSourceDropdown(source2Select, false); // Has "None" option, select "None"
+    populateSourceDropdown(source1Select, true);  // Select first device
+    populateSourceDropdown(source2Select, false); // Select "None"
 
-    // Enable controls if we have at least one device
-    const hasDevices = allDevices.length > 0;
-    if (transcribeToggle) {
-      transcribeToggle.disabled = !hasDevices;
-    }
-    if (monitorToggle) {
-      monitorToggle.disabled = !hasDevices;
-    }
-    if (aecToggle) {
-      aecToggle.disabled = !hasDevices;
-    }
-
-    // Sync AEC and mode state with backend
-    await syncBackendState();
-
-    // Update mode selector availability
-    updateModeSelector();
+    // After populating, configure sources if we have any
+    await onSourceChange();
   } catch (error) {
     console.error("Failed to load devices:", error);
     if (source1Select) {
@@ -104,27 +122,6 @@ async function loadDevices() {
       source2Select.innerHTML = `<option value="">Error loading devices</option>`;
     }
     setStatus(`Error: ${error}`, "error");
-  }
-}
-
-// Sync frontend state with backend (AEC enabled, recording mode)
-async function syncBackendState() {
-  try {
-    // Sync AEC enabled state
-    const backendAecEnabled = await invoke<boolean>("is_aec_enabled");
-    isAecEnabled = backendAecEnabled;
-    if (aecToggle) {
-      aecToggle.checked = backendAecEnabled;
-    }
-
-    // Sync recording mode
-    const backendMode = await invoke<RecordingMode>("get_recording_mode");
-    recordingMode = backendMode;
-    if (modeSelect) {
-      modeSelect.value = backendMode;
-    }
-  } catch (error) {
-    console.error("Failed to sync backend state:", error);
   }
 }
 
@@ -164,84 +161,16 @@ function getSelectedSources(): { source1Id: string | null; source2Id: string | n
   };
 }
 
-function hasAnySourceSelected(): boolean {
-  const { source1Id, source2Id } = getSelectedSources();
-  return source1Id !== null || source2Id !== null;
-}
-
-// Handle source selection changes - reconfigure capture if active
+// Handle source selection changes - configures capture automatically
 async function onSourceChange() {
-  // Always update mode selector when sources change
-  updateModeSelector();
-
-  if (!isMonitoring && !isTranscribing) {
-    // Not active, nothing to do
-    return;
-  }
-
-  if (!hasAnySourceSelected()) {
-    // No sources selected - stop everything
-    if (isTranscribing) {
-      // Can't transcribe with no sources - stop transcribing
-      setStatus("Transcription stopped: no sources selected", "error");
-      try {
-        await invoke("stop_transcribe_mode");
-      } catch (e) {
-        console.error("Error stopping transcribe mode:", e);
-      }
-      isTranscribing = false;
-      isMonitoring = false;
-      if (transcribeToggle) {
-        transcribeToggle.checked = false;
-      }
-      if (monitorToggle) {
-        monitorToggle.checked = false;
-        monitorToggle.disabled = false;
-      }
-      miniWaveformRenderer?.stop();
-      miniWaveformRenderer?.clear();
-      await cleanupVisualizationListener();
-    } else if (isMonitoring) {
-      // Stop monitoring
-      try {
-        await invoke("stop_monitor");
-      } catch (e) {
-        console.error("Error stopping monitor:", e);
-      }
-      isMonitoring = false;
-      if (monitorToggle) {
-        monitorToggle.checked = false;
-      }
-      miniWaveformRenderer?.stop();
-      miniWaveformRenderer?.clear();
-      await cleanupVisualizationListener();
-      setStatus("");
-    }
-    return;
-  }
-
-  // Reconfigure with new sources
   const { source1Id, source2Id } = getSelectedSources();
 
-  if (isTranscribing) {
-    // Restart transcribe mode with new sources
-    try {
-      await invoke("stop_transcribe_mode");
-      await invoke("start_transcribe_mode", { source1Id, source2Id });
-      updateStatusForCurrentState();
-    } catch (error) {
-      console.error("Error reconfiguring transcribe mode:", error);
-      setStatus(`Error: ${error}`, "error");
-    }
-  } else if (isMonitoring) {
-    // Restart monitoring with new sources
-    try {
-      await invoke("start_monitor", { source1Id, source2Id });
-      updateStatusForCurrentState();
-    } catch (error) {
-      console.error("Error reconfiguring monitor:", error);
-      setStatus(`Error: ${error}`, "error");
-    }
+  try {
+    // Set sources - capture starts/stops automatically based on configuration
+    await invoke("set_sources", { source1Id, source2Id });
+  } catch (error) {
+    console.error("Error configuring sources:", error);
+    setStatus(`Error: ${error}`, "error");
   }
 }
 
@@ -294,75 +223,188 @@ function setStatus(message: string, type: "normal" | "progress" | "warning" | "e
   }
 }
 
-async function setupVisualizationListener() {
-  if (visualizationUnlisten) return;
+// Update status based on current state
+function updateStatusDisplay() {
+  if (!isCapturing) {
+    setStatus("Ready - select an audio source to begin");
+    return;
+  }
 
-  visualizationUnlisten = await listen<VisualizationPayload>("visualization-data", (event) => {
-    // Push pre-downsampled waveform data to mini waveform
-    if (miniWaveformRenderer) {
-      miniWaveformRenderer.pushSamples(event.payload.waveform);
-    }
-  });
+  let statusText: string;
+  if (inSpeechSegment) {
+    statusText = "Recording speech...";
+  } else if (transcribeQueueDepth > 0) {
+    statusText = `Listening... (${transcribeQueueDepth} pending)`;
+  } else {
+    const modeText = transcriptionMode === "push_to_talk" 
+      ? `PTT Ready (${KEY_CODE_NAMES[pttKey]})`
+      : "Auto (VAD)";
+    statusText = `Listening... [${modeText}]`;
+  }
+  setStatus(statusText, "progress");
 }
 
-async function cleanupVisualizationListener() {
-  if (visualizationUnlisten) {
-    visualizationUnlisten();
-    visualizationUnlisten = null;
+// ============== Event Listeners ==============
+
+async function setupEventListeners() {
+  // Visualization data
+  if (!visualizationUnlisten) {
+    visualizationUnlisten = await listen<VisualizationPayload>("visualization-data", (event) => {
+      if (miniWaveformRenderer) {
+        miniWaveformRenderer.pushSamples(event.payload.waveform);
+      }
+    });
+  }
+
+  // Transcription results
+  if (!transcriptionCompleteUnlisten) {
+    transcriptionCompleteUnlisten = await listen<string>("transcription-complete", (event) => {
+      appendTranscription(event.payload);
+    });
+  }
+
+  // Speech events
+  if (!speechStartedUnlisten) {
+    speechStartedUnlisten = await listen("speech-started", () => {
+      console.log("[Speech] Started speaking");
+      inSpeechSegment = true;
+      updateStatusDisplay();
+    });
+  }
+
+  if (!speechEndedUnlisten) {
+    speechEndedUnlisten = await listen<number>("speech-ended", (event) => {
+      console.log(`[Speech] Stopped speaking (duration: ${event.payload}ms)`);
+      inSpeechSegment = false;
+      updateStatusDisplay();
+    });
+  }
+
+  // Capture state changes
+  if (!captureStateChangedUnlisten) {
+    captureStateChangedUnlisten = await listen<{capturing: boolean, error: string | null}>(
+      "capture-state-changed", 
+      (event) => {
+        console.log("[Capture] State changed:", event.payload);
+        isCapturing = event.payload.capturing;
+        
+        if (event.payload.error) {
+          setStatus(`Error: ${event.payload.error}`, "error");
+        } else {
+          updateStatusDisplay();
+        }
+
+        // Update waveform renderer
+        if (isCapturing) {
+          miniWaveformRenderer?.clear();
+          miniWaveformRenderer?.start();
+        } else {
+          miniWaveformRenderer?.stop();
+          miniWaveformRenderer?.clear();
+        }
+      }
+    );
+  }
+
+  // PTT events
+  if (!pttPressedUnlisten) {
+    pttPressedUnlisten = await listen("ptt-pressed", () => {
+      console.log("[PTT] Key pressed");
+      isPttActive = true;
+      updatePttIndicator();
+    });
+  }
+
+  if (!pttReleasedUnlisten) {
+    pttReleasedUnlisten = await listen("ptt-released", () => {
+      console.log("[PTT] Key released");
+      isPttActive = false;
+      updatePttIndicator();
+    });
+  }
+
+  // Mode changed
+  if (!transcriptionModeChangedUnlisten) {
+    transcriptionModeChangedUnlisten = await listen<TranscriptionMode>(
+      "transcription-mode-changed",
+      (event) => {
+        console.log("[Mode] Changed to:", event.payload);
+        transcriptionMode = event.payload;
+        updatePttIndicator();
+        updateStatusDisplay();
+      }
+    );
   }
 }
 
-// Transcription text buffer - stores accumulated text
+function cleanupEventListeners() {
+  visualizationUnlisten?.();
+  visualizationUnlisten = null;
+  
+  transcriptionCompleteUnlisten?.();
+  transcriptionCompleteUnlisten = null;
+  
+  transcriptionErrorUnlisten?.();
+  transcriptionErrorUnlisten = null;
+  
+  speechStartedUnlisten?.();
+  speechStartedUnlisten = null;
+  
+  speechEndedUnlisten?.();
+  speechEndedUnlisten = null;
+  
+  captureStateChangedUnlisten?.();
+  captureStateChangedUnlisten = null;
+  
+  pttPressedUnlisten?.();
+  pttPressedUnlisten = null;
+  
+  pttReleasedUnlisten?.();
+  pttReleasedUnlisten = null;
+  
+  transcriptionModeChangedUnlisten?.();
+  transcriptionModeChangedUnlisten = null;
+}
+
+// ============== Transcription Display ==============
+
 let transcriptionBuffer = "";
 
-// Update display with text and cursor
 function updateTranscriptionDisplay(): void {
   if (!resultEl) return;
 
-  // Clear and rebuild content with cursor
   resultEl.innerHTML = "";
 
-  // Create wrapper for text content (allows flex bottom-align while keeping inline flow)
   const textWrapper = document.createElement("span");
   textWrapper.className = "result-text";
 
-  // Add text
   if (transcriptionBuffer.length > 0) {
     textWrapper.appendChild(document.createTextNode(transcriptionBuffer));
   }
 
-  // Add blinking block cursor inline with text
   const cursor = document.createElement("span");
   cursor.className = "result-cursor";
   textWrapper.appendChild(cursor);
 
   resultEl.appendChild(textWrapper);
-
-  // Auto-scroll to bottom (ensure newest text is visible)
   resultEl.scrollTop = resultEl.scrollHeight;
 }
 
-// Append transcription text and manage buffer
 function appendTranscription(newText: string): void {
   if (!resultEl) return;
 
-  // Trim the new text and skip if empty
   const trimmedText = newText.trim();
   if (!trimmedText) return;
 
-  // Append with space separator (no line breaks)
   if (transcriptionBuffer.length > 0) {
     transcriptionBuffer += " " + trimmedText;
   } else {
     transcriptionBuffer = trimmedText;
   }
 
-  // Truncate to keep buffer from growing indefinitely
-  // Keep enough text to fill the panel with overflow for clipping effect
-  // ~80 chars per line, ~20 lines = ~1600 chars max
+  // Truncate to keep buffer manageable
   const maxChars = 2000;
   if (transcriptionBuffer.length > maxChars) {
-    // Find a word boundary to truncate at
     const startIndex = transcriptionBuffer.length - maxChars;
     const spaceIndex = transcriptionBuffer.indexOf(" ", startIndex);
     if (spaceIndex !== -1) {
@@ -375,128 +417,115 @@ function appendTranscription(newText: string): void {
   updateTranscriptionDisplay();
 }
 
-async function setupTranscriptionListeners() {
-  if (transcriptionCompleteUnlisten) return;
+// ============== PTT and Mode Control ==============
 
-  transcriptionCompleteUnlisten = await listen<string>("transcription-complete", (event) => {
-    appendTranscription(event.payload);
-    if (isMonitoring) {
-      setStatus("Monitoring...", "progress");
+async function loadPttStatus() {
+  try {
+    const status = await invoke<PttStatus>("get_ptt_status");
+    transcriptionMode = status.mode;
+    pttKey = status.key;
+    isPttActive = status.is_active;
+    
+    console.log(`PTT status: mode=${transcriptionMode}, key=${pttKey}`);
+    
+    // Update UI
+    if (modeToggle) {
+      modeToggle.checked = status.mode === "push_to_talk";
+    }
+    
+    if (pttKeySelect) {
+      pttKeySelect.value = status.key;
+      pttKeySelect.disabled = status.mode !== "push_to_talk";
+    }
+    
+    updatePttIndicator();
+    
+    if (status.error) {
+      console.warn("PTT error:", status.error);
+    }
+  } catch (error) {
+    console.error("Failed to load PTT status:", error);
+  }
+}
+
+function updatePttIndicator() {
+  if (pttIndicator) {
+    if (transcriptionMode === "push_to_talk" && isPttActive) {
+      pttIndicator.classList.remove("hidden");
+      pttIndicator.classList.add("active");
+      pttIndicator.title = `PTT Active (${KEY_CODE_NAMES[pttKey]} held)`;
+    } else if (transcriptionMode === "push_to_talk") {
+      pttIndicator.classList.remove("hidden");
+      pttIndicator.classList.remove("active");
+      pttIndicator.title = `PTT Ready (press ${KEY_CODE_NAMES[pttKey]} to speak)`;
     } else {
-      setStatus("Transcription complete");
+      pttIndicator.classList.add("hidden");
+      pttIndicator.classList.remove("active");
     }
-  });
-
-  transcriptionErrorUnlisten = await listen<string>("transcription-error", (event) => {
-    console.error("Transcription error:", event.payload);
-    setStatus(`Transcription error: ${event.payload}`, "error");
-  });
+  }
 }
 
-
-
-async function setupSpeechEventListeners() {
-  if (speechStartedUnlisten) return;
-
-  speechStartedUnlisten = await listen<SpeechEventPayload>("speech-started", (_event) => {
-    console.log("[Speech] Started speaking");
-    // Track speech segment state for transcribe mode
-    if (isTranscribing) {
-      inSpeechSegment = true;
-      updateStatusForCurrentState();
+async function onModeToggleChange() {
+  if (!modeToggle) return;
+  
+  const newMode: TranscriptionMode = modeToggle.checked ? "push_to_talk" : "automatic";
+  
+  try {
+    await invoke("set_transcription_mode", { mode: newMode });
+    transcriptionMode = newMode;
+    
+    // Update key selector state
+    if (pttKeySelect) {
+      pttKeySelect.disabled = newMode !== "push_to_talk";
     }
-  });
-
-  speechEndedUnlisten = await listen<SpeechEventPayload>("speech-ended", (event) => {
-    const duration = event.payload.duration_ms;
-    console.log(`[Speech] Stopped speaking (duration: ${duration}ms)`);
-    // Track speech segment state for transcribe mode
-    if (isTranscribing) {
-      inSpeechSegment = false;
-      updateStatusForCurrentState();
-    }
-  });
-}
-
-function cleanupSpeechEventListeners() {
-  if (speechStartedUnlisten) {
-    speechStartedUnlisten();
-    speechStartedUnlisten = null;
-  }
-  if (speechEndedUnlisten) {
-    speechEndedUnlisten();
-    speechEndedUnlisten = null;
+    
+    updatePttIndicator();
+    updateStatusDisplay();
+    
+    console.log(`Transcription mode set to: ${newMode}`);
+  } catch (error) {
+    console.error("Set transcription mode error:", error);
+    setStatus(`Error: ${error}`, "error");
+    modeToggle.checked = transcriptionMode === "push_to_talk";
   }
 }
 
-async function setupRecordingSavedListener() {
-  if (recordingSavedUnlisten) return;
-
-  recordingSavedUnlisten = await listen<string>("recording-saved", (event) => {
-    console.log(`[Recording] Saved to: ${event.payload}`);
-    // Show brief notification in status
-    if (statusEl) {
-      const currentStatus = statusEl.textContent || "";
-      if (!currentStatus.includes("Error")) {
-        const savedMsg = `Saved: ${event.payload}`;
-        // Briefly show saved message, then restore status
-        const prevStatus = currentStatus;
-        const prevClass = statusEl.className;
-        statusEl.textContent = savedMsg;
-        statusEl.className = "status";
-        setTimeout(() => {
-          if (statusEl && statusEl.textContent === savedMsg) {
-            statusEl.textContent = prevStatus;
-            statusEl.className = prevClass;
-          }
-        }, 3000);
-      }
-    }
-  });
-}
-
-function cleanupRecordingSavedListener() {
-  if (recordingSavedUnlisten) {
-    recordingSavedUnlisten();
-    recordingSavedUnlisten = null;
+async function onPttKeyChange() {
+  if (!pttKeySelect) return;
+  
+  const newKey = pttKeySelect.value as KeyCode;
+  
+  try {
+    await invoke("set_ptt_key", { key: newKey });
+    pttKey = newKey;
+    updatePttIndicator();
+    updateStatusDisplay();
+    console.log(`PTT key set to: ${KEY_CODE_NAMES[newKey]}`);
+  } catch (error) {
+    console.error("Set PTT key error:", error);
+    setStatus(`Error: ${error}`, "error");
+    pttKeySelect.value = pttKey;
   }
 }
 
-async function setupTranscribeQueueListener() {
-  if (transcribeQueueUpdateUnlisten) return;
-
-  transcribeQueueUpdateUnlisten = await listen<number>("transcribe-queue-update", (event) => {
-    transcribeQueueDepth = event.payload;
-    // Update status to show queue depth if transcribing
-    if (isTranscribing) {
-      updateStatusForCurrentState();
-    }
-  });
-}
-
-function cleanupTranscribeQueueListener() {
-  if (transcribeQueueUpdateUnlisten) {
-    transcribeQueueUpdateUnlisten();
-    transcribeQueueUpdateUnlisten = null;
+function populatePttKeySelect() {
+  if (!pttKeySelect) return;
+  
+  pttKeySelect.innerHTML = "";
+  
+  for (const [value, name] of Object.entries(KEY_CODE_NAMES)) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = name;
+    pttKeySelect.appendChild(option);
   }
 }
 
-function cleanupTranscriptionListeners() {
-  if (transcriptionCompleteUnlisten) {
-    transcriptionCompleteUnlisten();
-    transcriptionCompleteUnlisten = null;
-  }
-  if (transcriptionErrorUnlisten) {
-    transcriptionErrorUnlisten();
-    transcriptionErrorUnlisten = null;
-  }
-}
+// ============== CUDA Status ==============
 
-// Check CUDA build status and show indicator if enabled
 async function checkCudaStatus() {
   try {
     const status = await invoke<CudaStatus>("get_cuda_status");
-    cudaBuildEnabled = status.build_enabled;
 
     if (cudaIndicator) {
       if (status.build_enabled) {
@@ -514,293 +543,47 @@ async function checkCudaStatus() {
     }
 
     console.log(`CUDA status: build_enabled=${status.build_enabled}, runtime_available=${status.runtime_available}`);
-    console.log(`Whisper system info: ${status.system_info}`);
   } catch (error) {
     console.error("Failed to check CUDA status:", error);
   }
 }
 
-// Setup listeners for transcription active state
-async function setupTranscriptionActiveListeners() {
-  transcriptionStartedUnlisten = await listen("transcription-started", () => {
-    console.log(`[Transcription] Started (CUDA: ${cudaBuildEnabled})`);
-    if (transcribingIndicator) {
-      transcribingIndicator.classList.add("active");
-    }
-  });
+// ============== Window Management ==============
 
-  transcriptionFinishedUnlisten = await listen("transcription-finished", () => {
-    console.log(`[Transcription] Finished (CUDA: ${cudaBuildEnabled})`);
-    if (transcribingIndicator) {
-      transcribingIndicator.classList.remove("active");
-    }
-  });
-}
-
-function cleanupTranscriptionActiveListeners() {
-  if (transcriptionStartedUnlisten) {
-    transcriptionStartedUnlisten();
-    transcriptionStartedUnlisten = null;
-  }
-  if (transcriptionFinishedUnlisten) {
-    transcriptionFinishedUnlisten();
-    transcriptionFinishedUnlisten = null;
-  }
-}
-
-async function toggleAec() {
-  if (!aecToggle) return;
-
-  const newState = aecToggle.checked;
-  try {
-    await invoke("set_aec_enabled", { enabled: newState });
-    isAecEnabled = newState;
-    console.log(`Echo cancellation ${isAecEnabled ? "enabled" : "disabled"}`);
-  } catch (error) {
-    console.error("Toggle AEC error:", error);
-    // Revert toggle on error
-    aecToggle.checked = !newState;
-  }
-}
-
-async function onModeChange() {
-  if (!modeSelect) return;
-
-  const newMode = modeSelect.value as RecordingMode;
-  try {
-    await invoke("set_recording_mode", { mode: newMode });
-    recordingMode = newMode;
-    console.log(`Recording mode set to: ${recordingMode}`);
-
-    // Update status if currently monitoring/transcribing
-    if (isMonitoring || isTranscribing) {
-      updateStatusForCurrentState();
-    }
-  } catch (error) {
-    console.error("Set recording mode error:", error);
-    // Revert selector on error
-    modeSelect.value = recordingMode;
-  }
-}
-
-// Update the mode selector availability based on source selection
-function updateModeSelector() {
-  if (!modeSelect) return;
-
-  const { source1Id, source2Id } = getSelectedSources();
-  const hasTwoSources = source1Id !== null && source2Id !== null;
-
-  // Enable/disable the mode selector based on source count
-  modeSelect.disabled = !hasTwoSources;
-
-  // If only one source is selected and mode was EchoCancel, switch to Mixed
-  if (!hasTwoSources && recordingMode === "EchoCancel") {
-    modeSelect.value = "Mixed";
-    recordingMode = "Mixed";
-    invoke("set_recording_mode", { mode: "Mixed" }).catch(e => {
-      console.error("Failed to reset recording mode:", e);
-    });
-  }
-}
-
-// Update status message based on current state
-function updateStatusForCurrentState() {
-  const { source1Id, source2Id } = getSelectedSources();
-  const hasTwoSources = source1Id !== null && source2Id !== null;
-
-  let statusText: string;
-  if (isTranscribing) {
-    if (inSpeechSegment) {
-      statusText = "Recording speech...";
-    } else if (transcribeQueueDepth > 0) {
-      statusText = `Listening... (${transcribeQueueDepth} pending)`;
-    } else {
-      statusText = "Listening...";
-    }
-  } else if (isMonitoring) {
-    if (hasTwoSources) {
-      statusText = recordingMode === "EchoCancel"
-        ? "Monitoring (Voice Only)..."
-        : "Monitoring (Mixed)...";
-    } else {
-      statusText = "Monitoring...";
-    }
-  } else {
-    statusText = "";
-  }
-  setStatus(statusText, statusText ? "progress" : "normal");
-}
-
-async function toggleMonitor() {
-  if (!monitorToggle) return;
-
-  if (isMonitoring) {
-    // Stop monitoring
-    try {
-      await invoke("stop_monitor");
-      isMonitoring = false;
-      monitorToggle.checked = false;
-      setStatus("");
-
-      miniWaveformRenderer?.stop();
-      miniWaveformRenderer?.clear();
-      await cleanupVisualizationListener();
-    } catch (error) {
-      console.error("Stop monitor error:", error);
-      setStatus(`Error: ${error}`, "error");
-      monitorToggle.checked = true; // Revert toggle on error
-    }
-  } else {
-    // Start monitoring
-    if (!hasAnySourceSelected()) {
-      setStatus("Please select at least one audio source", "error");
-      monitorToggle.checked = false;
-      return;
-    }
-
-    const { source1Id, source2Id } = getSelectedSources();
-
-    try {
-      await setupVisualizationListener();
-      await invoke("start_monitor", {
-        source1Id,
-        source2Id,
-      });
-      isMonitoring = true;
-      monitorToggle.checked = true;
-
-      updateStatusForCurrentState();
-
-      miniWaveformRenderer?.clear();
-      miniWaveformRenderer?.start();
-    } catch (error) {
-      console.error("Start monitor error:", error);
-      setStatus(`Error: ${error}`, "error");
-      monitorToggle.checked = false;
-      await cleanupVisualizationListener();
-    }
-  }
-}
-
-async function toggleTranscribe() {
-  if (!transcribeToggle) return;
-
-  if (isTranscribing) {
-    // Stop transcribe mode
-    try {
-      await invoke("stop_transcribe_mode");
-
-      isTranscribing = false;
-      isMonitoring = false;
-      inSpeechSegment = false;
-      transcribeQueueDepth = 0;
-      transcribeToggle.checked = false;
-
-      // Re-enable monitor toggle
-      if (monitorToggle) {
-        monitorToggle.disabled = false;
-        monitorToggle.checked = false;
-      }
-
-      miniWaveformRenderer?.stop();
-      miniWaveformRenderer?.clear();
-      await cleanupVisualizationListener();
-      setStatus("");
-    } catch (error) {
-      console.error("Stop transcribe mode error:", error);
-      setStatus(`Error: ${error}`, "error");
-      isTranscribing = false;
-      isMonitoring = false;
-      inSpeechSegment = false;
-      transcribeQueueDepth = 0;
-      transcribeToggle.checked = false;
-      if (monitorToggle) {
-        monitorToggle.disabled = false;
-        monitorToggle.checked = false;
-      }
-      miniWaveformRenderer?.stop();
-      miniWaveformRenderer?.clear();
-      await cleanupVisualizationListener();
-    }
-  } else {
-    // Start transcribe mode
-    if (!hasAnySourceSelected()) {
-      setStatus("Please select at least one audio source", "error");
-      transcribeToggle.checked = false;
-      return;
-    }
-
-    const { source1Id, source2Id } = getSelectedSources();
-
-    try {
-      await setupVisualizationListener();
-      await setupTranscriptionListeners();
-      await setupTranscribeQueueListener();
-
-      await invoke("start_transcribe_mode", {
-        source1Id,
-        source2Id,
-      });
-      isTranscribing = true;
-      isMonitoring = true;
-      transcribeToggle.checked = true;
-
-      updateStatusForCurrentState();
-
-      // Disable monitor toggle during transcribe mode (monitoring is implicit)
-      if (monitorToggle) {
-        monitorToggle.disabled = true;
-        monitorToggle.checked = true;
-      }
-
-      if (!miniWaveformRenderer?.active) {
-        miniWaveformRenderer?.clear();
-      }
-      miniWaveformRenderer?.start();
-    } catch (error) {
-      console.error("Start transcribe mode error:", error);
-      setStatus(`Error: ${error}`, "error");
-      transcribeToggle.checked = false;
-      if (!isMonitoring) {
-        await cleanupVisualizationListener();
-      }
-    }
-  }
-}
-
-// Close the app - closes all windows
 async function closeApp() {
-  // Close visualization window if it exists
+  // Notify service we're disconnecting (stops capture for security)
+  try {
+    await invoke("app_disconnect");
+  } catch (error) {
+    console.error("Error sending disconnect:", error);
+  }
+  
   const vizWindow = await WebviewWindow.getByLabel("visualization");
   if (vizWindow) {
     await vizWindow.destroy();
   }
 
-  // Close main window (this will exit the app since it's the last window)
   const mainWindow = getCurrentWindow();
   await mainWindow.destroy();
 }
 
-// Open the visualization window (or focus if already open)
 async function openVisualizationWindow() {
-  // Get the pre-configured visualization window
   const vizWindow = await WebviewWindow.getByLabel("visualization");
   if (!vizWindow) {
     console.error("Visualization window not found");
     return;
   }
 
-  // Check if already visible
   const isVisible = await vizWindow.isVisible();
   if (isVisible) {
-    // Already visible, just focus it
     await vizWindow.setFocus();
   } else {
-    // Show the window
     await vizWindow.show();
     await vizWindow.setFocus();
   }
 }
+
+// ============== Initialization ==============
 
 window.addEventListener("DOMContentLoaded", () => {
   // Disable default context menu
@@ -808,12 +591,11 @@ window.addEventListener("DOMContentLoaded", () => {
     e.preventDefault();
   });
 
+  // Get DOM elements
   source1Select = document.querySelector("#source1-select");
   source2Select = document.querySelector("#source2-select");
-  monitorToggle = document.querySelector("#monitor-toggle");
-  aecToggle = document.querySelector("#aec-toggle");
-  modeSelect = document.querySelector("#mode-select");
-  transcribeToggle = document.querySelector("#transcribe-toggle");
+  modeToggle = document.querySelector("#mode-toggle");
+  pttKeySelect = document.querySelector("#ptt-key-select");
   statusEl = document.querySelector("#status");
   resultEl = document.querySelector("#transcription-result");
   modelWarning = document.querySelector("#model-warning");
@@ -821,17 +603,18 @@ window.addEventListener("DOMContentLoaded", () => {
   downloadModelBtn = document.querySelector("#download-model-btn");
   downloadStatusEl = document.querySelector("#download-status");
   miniWaveformCanvas = document.querySelector("#mini-waveform");
+  closeBtn = document.querySelector("#close-btn");
+  pttIndicator = document.querySelector("#ptt-indicator");
+  cudaIndicator = document.querySelector("#cuda-indicator");
 
-  // Initialize mini waveform renderer with reduced buffer for shorter time window
+  // Initialize mini waveform renderer
   if (miniWaveformCanvas) {
     miniWaveformRenderer = new MiniWaveformRenderer(miniWaveformCanvas, 64);
     miniWaveformRenderer.drawIdle();
 
-    // Add double-click handler to open visualization window
     miniWaveformCanvas.addEventListener("dblclick", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      console.log("Mini waveform double-clicked, opening visualization window...");
       openVisualizationWindow();
     });
   }
@@ -843,42 +626,55 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Setup transcription, speech, and recording event listeners early (always on)
-  setupTranscriptionListeners();
-  setupSpeechEventListeners();
-  setupRecordingSavedListener();
-
-  closeBtn = document.querySelector("#close-btn");
-
-  monitorToggle?.addEventListener("change", toggleMonitor);
-  aecToggle?.addEventListener("change", toggleAec);
-  modeSelect?.addEventListener("change", onModeChange);
-  transcribeToggle?.addEventListener("change", toggleTranscribe);
-  downloadModelBtn?.addEventListener("click", downloadModel);
+  // Set up event handlers
   source1Select?.addEventListener("change", onSourceChange);
   source2Select?.addEventListener("change", onSourceChange);
+  modeToggle?.addEventListener("change", onModeToggleChange);
+  pttKeySelect?.addEventListener("change", onPttKeyChange);
+  downloadModelBtn?.addEventListener("click", downloadModel);
   closeBtn?.addEventListener("click", async (e) => {
     e.preventDefault();
     e.stopPropagation();
     await closeApp();
   });
 
-  // Cleanup listeners on app close
+  // Cleanup on close - notify service we're disconnecting
   window.addEventListener("beforeunload", () => {
-    cleanupVisualizationListener();
-    cleanupTranscriptionListeners();
-    cleanupSpeechEventListeners();
-    cleanupRecordingSavedListener();
-    cleanupTranscribeQueueListener();
-    cleanupTranscriptionActiveListeners();
+    cleanupEventListeners();
+    // Fire and forget - can't await in beforeunload
+    invoke("app_disconnect").catch(console.error);
   });
 
-  // Initialize CUDA and transcription indicators
-  cudaIndicator = document.querySelector("#cuda-indicator");
-  transcribingIndicator = document.querySelector("#transcribing-indicator");
+  // Initialize app
+  initializeApp();
+});
 
-  loadDevices();
+async function initializeApp() {
+  // Set initial status
+  setStatus("Initializing...");
+  
+  // Populate PTT key dropdown
+  populatePttKeySelect();
+  
+  // Set up event listeners
+  await setupEventListeners();
+  
+  // Signal to service that we're ready - this enables capture
+  try {
+    await invoke("app_ready");
+    console.log("App ready signal sent to service");
+  } catch (error) {
+    console.error("Failed to signal app ready:", error);
+    setStatus(`Connection error: ${error}`, "error");
+    return;
+  }
+  
+  // Load initial data
+  await loadDevices();
   checkModelStatus();
   checkCudaStatus();
-  setupTranscriptionActiveListeners();
-});
+  loadPttStatus();
+  
+  // Update status based on current state
+  updateStatusDisplay();
+}

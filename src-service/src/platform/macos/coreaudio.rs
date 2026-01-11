@@ -65,7 +65,13 @@ extern "C" fn input_callback_proc(
 
     let bytes_per_frame = 4; // f32
     let frames_per_buffer = in_number_frames as usize;
-    let bytes_per_buffer = frames_per_buffer * bytes_per_frame;
+    let bytes_per_buffer = if context.is_non_interleaved {
+        // Non-interleaved: each buffer has one channel
+        frames_per_buffer * bytes_per_frame
+    } else {
+        // Interleaved: single buffer has all channels
+        frames_per_buffer * context.num_channels * bytes_per_frame
+    };
 
     // Create buffer storage
     let mut buffer_data: Vec<Vec<u8>> = (0..num_buffers)
@@ -107,6 +113,10 @@ extern "C" fn input_callback_proc(
     };
 
     if status != 0 {
+        tracing::error!(
+            "[AudioCallback] AudioUnitRender failed with OSStatus: {}",
+            status
+        );
         return status;
     }
 
@@ -822,7 +832,11 @@ fn run_capture_thread(
                 source2_id,
                 result_tx,
             }) => {
-                tracing::debug!("CoreAudio: Received StartSources command");
+                tracing::info!(
+                    "[CaptureThread] Received StartSources command: source1={:?}, source2={:?}",
+                    source1_id,
+                    source2_id
+                );
 
                 // Stop any existing capture
                 if let Some(manager) = capture_manager.take() {

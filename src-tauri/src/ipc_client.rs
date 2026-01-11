@@ -182,17 +182,28 @@ fn forward_event_to_tauri(app_handle: &AppHandle, event: EventType) {
         EventType::SpeechEnded { duration_ms } => {
             let _ = app_handle.emit("speech-ended", duration_ms);
         }
-        EventType::TranscribeStarted => {
-            let _ = app_handle.emit("transcribe-started", ());
-        }
-        EventType::TranscribeStopped => {
-            let _ = app_handle.emit("transcribe-stopped", ());
+        EventType::CaptureStateChanged { capturing, error } => {
+            #[derive(serde::Serialize, Clone)]
+            struct CaptureState {
+                capturing: bool,
+                error: Option<String>,
+            }
+            let _ = app_handle.emit("capture-state-changed", CaptureState { capturing, error });
         }
         EventType::ModelDownloadProgress { percent } => {
             let _ = app_handle.emit("model-download-progress", percent);
         }
         EventType::ModelDownloadComplete { success } => {
             let _ = app_handle.emit("model-download-complete", success);
+        }
+        EventType::PttPressed => {
+            let _ = app_handle.emit("ptt-pressed", ());
+        }
+        EventType::PttReleased => {
+            let _ = app_handle.emit("ptt-released", ());
+        }
+        EventType::TranscriptionModeChanged { mode } => {
+            let _ = app_handle.emit("transcription-mode-changed", mode);
         }
         EventType::Shutdown => {
             let _ = app_handle.emit("service-shutdown", ());

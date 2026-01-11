@@ -53,6 +53,7 @@ hound = "3.5"
 
 # FFT for spectrogram
 rustfft = "6.2"
+futures = "0.3.31"
 
 # =============================================================================
 # Platform-specific dependencies

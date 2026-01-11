@@ -530,6 +530,56 @@ button.recording:hover {
   color: #f6f6f6;
 }
 
+/* Mode toggle with Auto/PTT labels */
+.mode-toggle {
+  position: relative;
+}
+
+.mode-toggle .toggle-slider {
+  width: 52px;
+  background-color: #2563eb; /* Blue for Auto */
+}
+
+.mode-toggle input:checked + .toggle-slider {
+  background-color: #f59e0b; /* Amber for PTT */
+}
+
+.mode-toggle .toggle-slider::before {
+  width: 18px;
+  height: 18px;
+  top: 1px;
+  left: 2px;
+}
+
+.mode-toggle input:checked + .toggle-slider::before {
+  transform: translateX(30px);
+}
+
+.toggle-label-off,
+.toggle-label-on {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: color 0.2s;
+}
+
+.toggle-label-off {
+  color: #f6f6f6;
+}
+
+.toggle-label-on {
+  color: #666;
+}
+
+.mode-toggle input:checked ~ .toggle-label-off {
+  color: #666;
+}
+
+.mode-toggle input:checked ~ .toggle-label-on {
+  color: #f6f6f6;
+}
+
 /* Mode selector in controls bar */
 .mode-selector {
   display: flex;
@@ -609,6 +659,62 @@ button.recording:hover {
 
 .download-status.error {
   color: #dc3545;
+}
+
+/* PTT indicator */
+.ptt-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(100, 100, 100, 0.15);
+  border: 1px solid rgba(100, 100, 100, 0.4);
+  color: #888;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: all 0.2s ease;
+}
+
+.ptt-indicator.active {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #f59e0b;
+}
+
+.ptt-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #666;
+  transition: all 0.2s ease;
+}
+
+.ptt-indicator.active .ptt-dot {
+  background: #f59e0b;
+  animation: ptt-pulse 0.5s ease-in-out infinite;
+}
+
+.ptt-label {
+  line-height: 1;
+}
+
+@keyframes ptt-pulse {
+  0%, 100% { 
+    opacity: 1;
+    box-shadow: 0 0 4px #f59e0b;
+  }
+  50% { 
+    opacity: 0.7;
+    box-shadow: 0 0 8px #f59e0b;
+  }
+}
+
+/* PTT key selector - slightly narrower */
+.ptt-key-selector select {
+  min-width: 90px;
 }
 
 .hidden {

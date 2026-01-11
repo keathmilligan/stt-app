@@ -2,12 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{AudioSourceType, RecordingMode};
-
-/// Default value for transcription_enabled (true for backwards compatibility)
-fn default_transcription_enabled() -> bool {
-    true
-}
+use crate::types::{AudioSourceType, KeyCode, RecordingMode, TranscriptionMode};
 
 /// IPC request from client to service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,27 +16,22 @@ pub enum Request {
         source_type: Option<AudioSourceType>,
     },
 
-    // === Transcription Control ===
-    /// Start transcription mode
-    StartTranscribe {
-        /// Primary audio source ID
+    // === Audio Source Configuration ===
+    /// Configure audio sources - capture starts automatically when valid sources are set
+    SetSources {
+        /// Primary audio source ID (mic)
         #[serde(skip_serializing_if = "Option::is_none")]
         source1_id: Option<String>,
-        /// Secondary audio source ID (for mixing/AEC)
+        /// Secondary audio source ID (system audio for mixing/AEC)
         #[serde(skip_serializing_if = "Option::is_none")]
         source2_id: Option<String>,
-        /// Enable acoustic echo cancellation
-        #[serde(default)]
-        aec_enabled: bool,
-        /// Recording mode (mixed or echo-cancel)
-        #[serde(default)]
-        mode: RecordingMode,
-        /// Enable transcription (when false, only monitoring/visualization is active)
-        #[serde(default = "default_transcription_enabled")]
-        transcription_enabled: bool,
     },
-    /// Stop transcription mode
-    StopTranscribe,
+
+    // === Audio Settings ===
+    /// Set acoustic echo cancellation enabled
+    SetAecEnabled { enabled: bool },
+    /// Set recording mode (mixed or echo-cancel)
+    SetRecordingMode { mode: RecordingMode },
 
     // === State Queries ===
     /// Get current transcription status
@@ -57,6 +47,26 @@ pub enum Request {
     /// Get CUDA/GPU acceleration status
     GetCudaStatus,
 
+    // === Transcription Mode Control ===
+    /// Set the transcription mode (Automatic or PushToTalk)
+    SetTranscriptionMode {
+        /// The transcription mode to set
+        mode: TranscriptionMode,
+    },
+    /// Set the push-to-talk hotkey
+    SetPushToTalkKey {
+        /// The key code to use for PTT
+        key: KeyCode,
+    },
+    /// Get the current PTT status
+    GetPttStatus,
+
+    // === Session Control ===
+    /// Signal that GUI is ready - enables capture when sources are configured
+    AppReady,
+    /// Signal that GUI is disconnecting - stops capture for security
+    AppDisconnect,
+
     // === Service Control ===
     /// Ping for health check
     Ping,
@@ -68,15 +78,10 @@ impl Request {
     /// Validate all parameters in this request.
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            Request::StartTranscribe {
+            Request::SetSources {
                 source1_id,
                 source2_id,
-                ..
             } => {
-                // At least one source must be specified
-                if source1_id.is_none() && source2_id.is_none() {
-                    return Err("At least one audio source must be specified".to_string());
-                }
                 // Validate source ID format (basic check)
                 if let Some(id) = source1_id {
                     if id.is_empty() {

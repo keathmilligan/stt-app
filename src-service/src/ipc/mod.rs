@@ -1,6 +1,6 @@
 //! IPC server for client communication.
 
-mod handlers;
+pub mod handlers;
 mod server;
 
 pub use server::{broadcast_event, run_server};

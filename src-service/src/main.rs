@@ -5,9 +5,11 @@
 
 mod audio;
 mod audio_loop;
+mod hotkey;
 mod ipc;
 mod platform;
 mod processor;
+mod ptt_controller;
 mod state;
 mod transcription;
 
@@ -68,6 +70,15 @@ fn main() {
         if let Err(e) = platform::init_audio_backend() {
             error!("Failed to initialize audio backend: {}", e);
         }
+
+        // Initialize hotkey backend (non-fatal if unavailable)
+        info!("Initializing hotkey backend...");
+        if let Err(e) = hotkey::init_hotkey_backend() {
+            info!("Hotkey backend not available: {}", e);
+        }
+
+        // Initialize transcription system (worker ready to process segments)
+        ipc::handlers::init_transcription_system();
 
         // Start the IPC server (runs until shutdown)
         if let Err(e) = ipc::run_server().await {

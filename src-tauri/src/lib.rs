@@ -6,7 +6,7 @@
 mod ipc_client;
 
 use flowstt_common::ipc::{Request, Response};
-use flowstt_common::{AudioDevice, RecordingMode};
+use flowstt_common::{AudioDevice, KeyCode, RecordingMode, TranscriptionMode};
 use ipc_client::{IpcClient, SharedIpcClient};
 use std::env;
 use std::sync::Arc;
@@ -65,28 +65,19 @@ async fn list_all_sources(state: State<'_, AppState>) -> Result<Vec<AudioDevice>
     }
 }
 
-/// Start monitoring with up to two sources mixed together
+/// Set audio sources - capture starts automatically when valid sources are configured
 #[tauri::command]
-async fn start_monitor(
+async fn set_sources(
     source1_id: Option<String>,
     source2_id: Option<String>,
     state: State<'_, AppState>,
     app_handle: AppHandle,
 ) -> Result<(), String> {
-    // Need at least one source
-    if source1_id.is_none() && source2_id.is_none() {
-        return Err("At least one audio source must be selected".to_string());
-    }
-
-    // Start monitoring only (transcription disabled - just visualization)
     let response = send_request(
         &state.ipc,
-        Request::StartTranscribe {
+        Request::SetSources {
             source1_id,
             source2_id,
-            aec_enabled: false,
-            mode: RecordingMode::Mixed,
-            transcription_enabled: false,
         },
     )
     .await?;
@@ -107,99 +98,28 @@ async fn start_monitor(
     }
 }
 
-/// Stop monitoring
+/// Set echo cancellation enabled/disabled
 #[tauri::command]
-async fn stop_monitor(state: State<'_, AppState>) -> Result<(), String> {
-    let response = send_request(&state.ipc, Request::StopTranscribe).await?;
+async fn set_aec_enabled(enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
+    let response = send_request(&state.ipc, Request::SetAecEnabled { enabled }).await?;
 
     match response {
         Response::Ok => Ok(()),
-        Response::Error { message } => {
-            if message.contains("not active") {
-                Ok(()) // Already stopped
-            } else {
-                Err(message)
-            }
-        }
-        _ => Err("Unexpected response".into()),
-    }
-}
-
-/// Check if monitoring is active
-#[tauri::command]
-async fn is_monitoring(state: State<'_, AppState>) -> Result<bool, String> {
-    let response = send_request(&state.ipc, Request::GetStatus).await?;
-
-    match response {
-        Response::Status(status) => Ok(status.active),
         Response::Error { message } => Err(message),
         _ => Err("Unexpected response".into()),
     }
 }
 
-/// Start recording with up to two sources mixed together
-/// Note: In the new architecture, recording is handled by transcribe mode
-#[tauri::command]
-async fn start_recording(
-    source1_id: Option<String>,
-    source2_id: Option<String>,
-    state: State<'_, AppState>,
-    app_handle: AppHandle,
-) -> Result<(), String> {
-    start_monitor(source1_id, source2_id, state, app_handle).await
-}
-
-/// Stop recording
-#[tauri::command]
-async fn stop_recording(
-    state: State<'_, AppState>,
-    _app_handle: AppHandle,
-    _keep_monitoring: bool,
-) -> Result<(), String> {
-    stop_monitor(state).await
-}
-
-/// Check if recording is active
-#[tauri::command]
-async fn is_recording(state: State<'_, AppState>) -> Result<bool, String> {
-    is_monitoring(state).await
-}
-
-/// Set echo cancellation enabled/disabled
-#[tauri::command]
-async fn set_aec_enabled(_enabled: bool, _state: State<'_, AppState>) -> Result<(), String> {
-    // AEC is configured per-request in the service
-    // This is now a no-op - AEC is enabled via start_transcribe_mode
-    Ok(())
-}
-
-/// Check if AEC is enabled
-#[tauri::command]
-async fn is_aec_enabled(_state: State<'_, AppState>) -> Result<bool, String> {
-    // AEC state is managed per-session in the service
-    Ok(false)
-}
-
 /// Set recording mode
 #[tauri::command]
-async fn set_recording_mode(
-    _mode: RecordingMode,
-    _state: State<'_, AppState>,
-) -> Result<(), String> {
-    // Recording mode is configured per-request in the service
-    Ok(())
-}
+async fn set_recording_mode(mode: RecordingMode, state: State<'_, AppState>) -> Result<(), String> {
+    let response = send_request(&state.ipc, Request::SetRecordingMode { mode }).await?;
 
-/// Get current recording mode
-#[tauri::command]
-async fn get_recording_mode(_state: State<'_, AppState>) -> Result<RecordingMode, String> {
-    Ok(RecordingMode::Mixed)
-}
-
-/// Transcribe audio data (legacy - now handled automatically by transcribe mode)
-#[tauri::command]
-async fn transcribe(_audio_data: Vec<f32>, _state: State<'_, AppState>) -> Result<String, String> {
-    Err("Direct transcription not supported - use transcribe mode".into())
+    match response {
+        Response::Ok => Ok(()),
+        Response::Error { message } => Err(message),
+        _ => Err("Unexpected response".into()),
+    }
 }
 
 /// Check Whisper model status
@@ -260,49 +180,101 @@ async fn get_cuda_status(state: State<'_, AppState>) -> Result<LocalCudaStatus, 
     }
 }
 
-/// Transcribe mode status for frontend
+/// Status struct for frontend
 #[derive(serde::Serialize)]
-struct TranscribeModeStatus {
-    active: bool,
+struct LocalStatus {
+    capturing: bool,
     in_speech: bool,
     queue_depth: usize,
+    error: Option<String>,
 }
 
-/// Start automatic transcription mode
+/// Get current status
 #[tauri::command]
-async fn start_transcribe_mode(
-    source1_id: Option<String>,
-    source2_id: Option<String>,
-    state: State<'_, AppState>,
-    app_handle: AppHandle,
-) -> Result<(), String> {
-    // Need at least one source
-    if source1_id.is_none() && source2_id.is_none() {
-        return Err("At least one audio source must be selected".to_string());
-    }
+async fn get_status(state: State<'_, AppState>) -> Result<LocalStatus, String> {
+    let response = send_request(&state.ipc, Request::GetStatus).await?;
 
-    let response = send_request(
-        &state.ipc,
-        Request::StartTranscribe {
-            source1_id,
-            source2_id,
-            aec_enabled: false,
-            mode: RecordingMode::Mixed,
-            transcription_enabled: true,
-        },
-    )
-    .await?;
+    match response {
+        Response::Status(status) => Ok(LocalStatus {
+            capturing: status.capturing,
+            in_speech: status.in_speech,
+            queue_depth: status.queue_depth,
+            error: status.error,
+        }),
+        Response::Error { message } => Err(message),
+        _ => Err("Unexpected response".into()),
+    }
+}
+
+/// Push-to-talk status for frontend
+#[derive(serde::Serialize)]
+struct LocalPttStatus {
+    mode: TranscriptionMode,
+    key: KeyCode,
+    is_active: bool,
+    available: bool,
+    error: Option<String>,
+}
+
+/// Set the transcription mode (Automatic or PushToTalk)
+#[tauri::command]
+async fn set_transcription_mode(
+    mode: TranscriptionMode,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let response = send_request(&state.ipc, Request::SetTranscriptionMode { mode }).await?;
+
+    match response {
+        Response::Ok => Ok(()),
+        Response::Error { message } => Err(message),
+        _ => Err("Unexpected response".into()),
+    }
+}
+
+/// Set the push-to-talk hotkey
+#[tauri::command]
+async fn set_ptt_key(key: KeyCode, state: State<'_, AppState>) -> Result<(), String> {
+    let response = send_request(&state.ipc, Request::SetPushToTalkKey { key }).await?;
+
+    match response {
+        Response::Ok => Ok(()),
+        Response::Error { message } => Err(message),
+        _ => Err("Unexpected response".into()),
+    }
+}
+
+/// Get push-to-talk status
+#[tauri::command]
+async fn get_ptt_status(state: State<'_, AppState>) -> Result<LocalPttStatus, String> {
+    let response = send_request(&state.ipc, Request::GetPttStatus).await?;
+
+    match response {
+        Response::PttStatus(status) => Ok(LocalPttStatus {
+            mode: status.mode,
+            key: status.key,
+            is_active: status.is_active,
+            available: status.available,
+            error: status.error,
+        }),
+        Response::Error { message } => Err(message),
+        _ => Err("Unexpected response".into()),
+    }
+}
+
+/// Signal that the app is ready to begin capture
+#[tauri::command]
+async fn app_ready(state: State<'_, AppState>, app_handle: AppHandle) -> Result<(), String> {
+    let response = send_request(&state.ipc, Request::AppReady).await?;
 
     match response {
         Response::Ok => {
-            // Start event forwarding if not already running
+            // Start event forwarding now that we're ready
             start_event_forwarding(
                 state.ipc.clone(),
                 app_handle,
                 state.event_task_running.clone(),
             )
             .await;
-            println!("[TranscribeMode] Started via service");
             Ok(())
         }
         Response::Error { message } => Err(message),
@@ -310,53 +282,13 @@ async fn start_transcribe_mode(
     }
 }
 
-/// Stop automatic transcription mode
+/// Signal that the app is disconnecting (for cleanup)
 #[tauri::command]
-async fn stop_transcribe_mode(
-    state: State<'_, AppState>,
-    _app_handle: AppHandle,
-) -> Result<(), String> {
-    let response = send_request(&state.ipc, Request::StopTranscribe).await?;
+async fn app_disconnect(state: State<'_, AppState>) -> Result<(), String> {
+    let response = send_request(&state.ipc, Request::AppDisconnect).await?;
 
     match response {
-        Response::Ok => {
-            println!("[TranscribeMode] Stopped via service");
-            Ok(())
-        }
-        Response::Error { message } => {
-            if message.contains("not active") {
-                Ok(()) // Already stopped
-            } else {
-                Err(message)
-            }
-        }
-        _ => Err("Unexpected response".into()),
-    }
-}
-
-/// Check if transcribe mode is active
-#[tauri::command]
-async fn is_transcribe_active(state: State<'_, AppState>) -> Result<bool, String> {
-    let response = send_request(&state.ipc, Request::GetStatus).await?;
-
-    match response {
-        Response::Status(status) => Ok(status.active),
-        Response::Error { message } => Err(message),
-        _ => Err("Unexpected response".into()),
-    }
-}
-
-/// Get transcribe mode status
-#[tauri::command]
-async fn get_transcribe_status(state: State<'_, AppState>) -> Result<TranscribeModeStatus, String> {
-    let response = send_request(&state.ipc, Request::GetStatus).await?;
-
-    match response {
-        Response::Status(status) => Ok(TranscribeModeStatus {
-            active: status.active,
-            in_speech: status.in_speech,
-            queue_depth: status.queue_depth,
-        }),
+        Response::Ok => Ok(()),
         Response::Error { message } => Err(message),
         _ => Err("Unexpected response".into()),
     }
@@ -418,24 +350,18 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_all_sources,
-            start_recording,
-            stop_recording,
-            is_recording,
-            start_monitor,
-            stop_monitor,
-            is_monitoring,
+            set_sources,
             set_aec_enabled,
-            is_aec_enabled,
             set_recording_mode,
-            get_recording_mode,
-            transcribe,
             check_model_status,
             download_model,
-            start_transcribe_mode,
-            stop_transcribe_mode,
-            is_transcribe_active,
-            get_transcribe_status,
+            get_status,
             get_cuda_status,
+            set_transcription_mode,
+            set_ptt_key,
+            get_ptt_status,
+            app_ready,
+            app_disconnect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

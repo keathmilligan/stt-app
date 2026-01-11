@@ -3,7 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    AudioDevice, CudaStatus, ModelStatus, TranscribeStatus, TranscriptionResult, VisualizationData,
+    AudioDevice, CudaStatus, ModelStatus, PttStatus, TranscribeStatus, TranscriptionResult,
+    VisualizationData,
 };
 
 /// IPC response from service to client.
@@ -22,6 +23,9 @@ pub enum Response {
 
     /// CUDA/GPU status
     CudaStatus(CudaStatus),
+
+    /// Push-to-talk status
+    PttStatus(PttStatus),
 
     /// Subscribed to events
     Subscribed,
@@ -51,23 +55,38 @@ pub enum EventType {
     /// Transcription result for a segment
     TranscriptionComplete(TranscriptionResult),
 
-    /// Speech started
+    /// Speech started (segment recording began)
     SpeechStarted,
 
-    /// Speech ended
+    /// Speech ended (segment recording stopped)
     SpeechEnded { duration_ms: u64 },
 
-    /// Transcription mode started
-    TranscribeStarted,
-
-    /// Transcription mode stopped
-    TranscribeStopped,
+    /// Audio capture state changed
+    CaptureStateChanged {
+        /// Whether capture is now active
+        capturing: bool,
+        /// Error message if capture failed
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
 
     /// Model download progress
     ModelDownloadProgress { percent: u8 },
 
     /// Model download complete
     ModelDownloadComplete { success: bool },
+
+    /// Push-to-talk key pressed
+    PttPressed,
+
+    /// Push-to-talk key released
+    PttReleased,
+
+    /// Transcription mode changed (Auto vs PTT)
+    TranscriptionModeChanged {
+        /// The new transcription mode
+        mode: crate::types::TranscriptionMode,
+    },
 
     /// Service is shutting down
     Shutdown,

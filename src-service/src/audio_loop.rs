@@ -1,7 +1,8 @@
 //! Audio processing loop for the service.
 //!
 //! This module connects the platform audio backend to the speech detection
-//! and transcription systems.
+//! and transcription systems. In Automatic mode, uses VAD to trigger transcription.
+//! In PTT mode, the PTT controller manages transcription triggers.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -53,7 +54,7 @@ pub fn start_audio_loop(
         .unwrap_or(48000);
 
     thread::spawn(move || {
-        info!("[AudioLoop] Starting audio processing loop");
+        tracing::info!("[AudioLoop] Starting audio processing loop");
 
         // Create speech detector
         let mut speech_detector = SpeechDetector::new(sample_rate);
@@ -83,7 +84,7 @@ pub fn start_audio_loop(
                 // Convert to mono for processing
                 let mono_samples = convert_to_mono(&data.samples, data.channels as usize);
 
-                // Process through speech detector
+                // Process through speech detector (always run for visualization)
                 speech_detector.process(&mono_samples);
 
                 // Get speech metrics for visualization
@@ -98,12 +99,14 @@ pub fn start_audio_loop(
                 let word_break = speech_detector.take_word_break_event();
 
                 // Update transcribe state if active
+                // Note: In Automatic mode, VAD triggers segments
+                // In PTT mode, PTT controller triggers segments (not audio_loop)
                 if let Ok(mut transcribe) = transcribe_state.try_lock() {
                     if transcribe.is_active {
                         // Write samples to ring buffer
                         transcribe.process_samples(&data.samples);
 
-                        // Handle speech events
+                        // Use speech detection events to trigger segments
                         match state_change {
                             SpeechStateChange::Started { lookback_samples } => {
                                 transcribe.on_speech_started(lookback_samples);
@@ -140,7 +143,7 @@ pub fn start_audio_loop(
             }
         }
 
-        info!("[AudioLoop] Audio processing loop stopped");
+        tracing::info!("[AudioLoop] Audio processing loop stopped");
     });
 
     Ok(())

@@ -199,13 +199,23 @@ async fn run(cli: Cli) -> Result<(), String> {
                 RecordingModeArg::EchoCancel => RecordingMode::EchoCancel,
             };
 
+            // Set AEC and recording mode first
+            if aec {
+                let _ = client
+                    .request(Request::SetAecEnabled { enabled: true })
+                    .await;
+            }
+            let _ = client
+                .request(Request::SetRecordingMode {
+                    mode: recording_mode,
+                })
+                .await;
+
+            // Set sources - this starts capture automatically
             let response = client
-                .request(Request::StartTranscribe {
+                .request(Request::SetSources {
                     source1_id: source1,
                     source2_id: source2,
-                    aec_enabled: aec,
-                    mode: recording_mode,
-                    transcription_enabled: true,
                 })
                 .await
                 .map_err(|e| e.to_string())?;
@@ -241,7 +251,7 @@ async fn run(cli: Cli) -> Result<(), String> {
                             .map_err(|e| e.to_string())?;
 
                         if let Response::Status(status) = status_response {
-                            if !status.active {
+                            if !status.capturing {
                                 if !cli.quiet {
                                     println!("\n{}", "Transcription stopped".yellow());
                                 }
@@ -266,14 +276,18 @@ async fn run(cli: Cli) -> Result<(), String> {
                     if matches!(cli.format, OutputFormat::Json) {
                         println!("{}", serde_json::to_string_pretty(&status).unwrap());
                     } else {
-                        let active_str = if status.active {
-                            "active".green().bold()
+                        let capture_str = if status.capturing {
+                            "capturing".green().bold()
                         } else {
-                            "inactive".dimmed()
+                            "idle".dimmed()
                         };
-                        println!("Transcription: {}", active_str);
+                        println!("Capture: {}", capture_str);
 
-                        if status.active {
+                        if let Some(error) = &status.error {
+                            println!("Error: {}", error.red());
+                        }
+
+                        if status.capturing {
                             let speech_str = if status.in_speech {
                                 "speaking".green()
                             } else {
@@ -290,26 +304,22 @@ async fn run(cli: Cli) -> Result<(), String> {
         }
 
         Commands::Stop => {
+            // Clear sources to stop capture
             let response = client
-                .request(Request::StopTranscribe)
+                .request(Request::SetSources {
+                    source1_id: None,
+                    source2_id: None,
+                })
                 .await
                 .map_err(|e| e.to_string())?;
 
             match response {
                 Response::Ok => {
                     if !cli.quiet {
-                        println!("{}", "Transcription stopped".green());
+                        println!("{}", "Capture stopped".green());
                     }
                 }
-                Response::Error { message } => {
-                    if message.contains("not active") {
-                        if !cli.quiet {
-                            println!("{}", "Transcription is not active".yellow());
-                        }
-                    } else {
-                        return Err(message);
-                    }
-                }
+                Response::Error { message } => return Err(message),
                 _ => return Err("Unexpected response".into()),
             }
         }
